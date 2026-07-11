@@ -1,13 +1,15 @@
 """Games endpoints: upload -> background processing -> results (+ simulate)."""
 from __future__ import annotations
 
+import csv
+import io
 import json
 import shutil
 from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, File, Form, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from app import config
@@ -244,3 +246,189 @@ async def simulate_game(game_id: str, body: Optional[SimulateBody] = None) -> di
     if not ws_module.start_simulation(game_id, speed):
         raise ApiError(409, "already_simulating", "A replay is already running for this game")
     return {"game_id": game_id, "status": "replaying", "speed": speed, "events": n_events}
+
+
+# --- Bonus: shot chart --------------------------------------------------------
+
+
+@router.get("/games/{game_id}/shotchart")
+def get_shotchart(game_id: str) -> dict[str, Any]:
+    """Shot chart derived from stored events (see analytics/shotchart.py)."""
+    from app.analytics.shotchart import build_shotchart
+
+    with get_conn() as conn:
+        row = fetch_game(conn, game_id)
+        rows = conn.execute(
+            "SELECT * FROM events WHERE game_id = ? ORDER BY seq", (game_id,)
+        ).fetchall()
+    events = [event_row_to_dict(r) for r in rows]
+    return build_shotchart(game_id, row["scoring"], events)
+
+
+# --- Bonus: highlight reel ----------------------------------------------------
+
+_MAX_REEL_CLIPS = 12
+
+
+def _reel_path(game_id: str) -> Path:
+    return config.MEDIA_DIR / "highlights" / game_id / "reel.mp4"
+
+
+def _reel_url(game_id: str) -> str:
+    return f"/media/highlights/{game_id}/reel.mp4"
+
+
+def _highlight_clip_specs(game_id: str) -> list[tuple[Path, str]]:
+    """(local mp4 path, label) for each highlight whose clip file exists."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM highlights WHERE game_id = ? AND video_url IS NOT NULL"
+            " ORDER BY t_start",
+            (game_id,),
+        ).fetchall()
+    specs: list[tuple[Path, str]] = []
+    for r in rows:
+        url = r["video_url"] or ""
+        if not url.startswith("/media/"):
+            continue
+        path = config.MEDIA_DIR / url[len("/media/"):].lstrip("/")
+        if path.exists():
+            specs.append((path, r["label"] or r["highlight_id"]))
+    return specs
+
+
+def _probe_video(path: Path) -> tuple[Optional[int], Optional[float]]:
+    """(frame_count, duration_s) of a video file via cv2; (None, None) if unreadable."""
+    import cv2
+
+    cap = cv2.VideoCapture(str(path))
+    try:
+        if not cap.isOpened():
+            return None, None
+        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        if n <= 0 or fps <= 0:
+            return (n if n > 0 else None), None
+        return n, round(n / fps, 2)
+    finally:
+        cap.release()
+
+
+@router.post("/games/{game_id}/reel")
+def build_game_reel(game_id: str) -> dict[str, Any]:
+    """Stitch the game's highlight clips into one reel.mp4 (idempotent)."""
+    from app.analytics.reel import build_reel
+
+    with get_conn() as conn:
+        fetch_game(conn, game_id)
+    reel_file = _reel_path(game_id)
+    specs = _highlight_clip_specs(game_id)
+    if reel_file.exists():
+        _, duration_s = _probe_video(reel_file)
+        return {
+            "reel_url": _reel_url(game_id),
+            "clips": len(specs),
+            "duration_s": duration_s,
+            "cached": True,
+        }
+    if not specs:
+        raise ApiError(409, "no_highlights", f"Game {game_id} has no highlight clips to stitch")
+    try:
+        info = build_reel(game_id, specs[:_MAX_REEL_CLIPS], reel_file)
+    except RuntimeError as exc:
+        raise ApiError(409, "no_highlights", str(exc))
+    return {
+        "reel_url": _reel_url(game_id),
+        "clips": info["clips"],
+        "duration_s": info["duration_s"],
+        "cached": False,
+    }
+
+
+@router.get("/games/{game_id}/reel")
+def get_game_reel(game_id: str) -> dict[str, Any]:
+    with get_conn() as conn:
+        fetch_game(conn, game_id)
+    reel_file = _reel_path(game_id)
+    if not reel_file.exists():
+        raise ApiError(404, "reel_not_built", f"No reel built for game {game_id} yet")
+    _, duration_s = _probe_video(reel_file)
+    return {"reel_url": _reel_url(game_id), "duration_s": duration_s}
+
+
+# --- Bonus: exports -----------------------------------------------------------
+
+
+def _empty_analytics(game_id: str) -> dict[str, Any]:
+    return {
+        "game_id": game_id,
+        "team_stats": {},
+        "players": [],
+        "ball_heatmap": {
+            "grid_w": config.HEATMAP_GRID_W,
+            "grid_h": config.HEATMAP_GRID_H,
+            "cells": [],
+        },
+    }
+
+
+@router.get("/games/{game_id}/export.json")
+def export_game_json(game_id: str) -> JSONResponse:
+    """Complete downloadable bundle: game, events, analytics, highlights, shotchart."""
+    from app.analytics.shotchart import build_shotchart
+
+    with get_conn() as conn:
+        row = fetch_game(conn, game_id)
+        players = [
+            player_row_to_dict(r)
+            for r in conn.execute(
+                "SELECT p.* FROM players p JOIN game_players gp ON gp.player_id = p.player_id"
+                " WHERE gp.game_id = ? ORDER BY p.player_id",
+                (game_id,),
+            ).fetchall()
+        ]
+        event_rows = conn.execute(
+            "SELECT * FROM events WHERE game_id = ? ORDER BY seq", (game_id,)
+        ).fetchall()
+        analytics_row = conn.execute(
+            "SELECT json FROM analytics WHERE game_id = ?", (game_id,)
+        ).fetchone()
+        highlight_rows = conn.execute(
+            "SELECT * FROM highlights WHERE game_id = ? ORDER BY t_start", (game_id,)
+        ).fetchall()
+
+    events = [event_row_to_dict(r) for r in event_rows]
+    bundle = {
+        "game": game_detail(row, players),
+        "events": events,
+        "analytics": json.loads(analytics_row["json"]) if analytics_row else _empty_analytics(game_id),
+        "highlights": [highlight_row_to_dict(r) for r in highlight_rows],
+        "shotchart": build_shotchart(game_id, row["scoring"], events),
+    }
+    return JSONResponse(
+        content=bundle,
+        headers={"Content-Disposition": f'attachment; filename="courtvision_{game_id}.json"'},
+    )
+
+
+@router.get("/games/{game_id}/export.csv")
+def export_game_csv(game_id: str) -> Response:
+    """Events as CSV (UTF-8 with BOM so Excel opens it correctly)."""
+    with get_conn() as conn:
+        fetch_game(conn, game_id)
+        rows = conn.execute(
+            "SELECT * FROM events WHERE game_id = ? ORDER BY seq", (game_id,)
+        ).fetchall()
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\r\n")
+    writer.writerow(["t", "type", "team", "player_id", "points", "score_a", "score_b", "text"])
+    for r in rows:
+        writer.writerow(
+            [r["t"], r["type"], r["team"], r["player_id"], r["points"],
+             r["score_a"], r["score_b"], r["text"]]
+        )
+    return Response(
+        content="\ufeff" + buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="courtvision_{game_id}.csv"'},
+    )

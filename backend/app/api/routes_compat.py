@@ -6,14 +6,17 @@ error payloads like {"error": "film_not_found"}) so the real frontend client
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import secrets
 import time
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, Body
 from fastapi.responses import JSONResponse
 
+from app import config
 from app.api import compat_data
 from app.commentary.generator import (
     CommentaryRequest,
@@ -86,6 +89,25 @@ def get_film(film_id: str):
 # --- Commentary + scouting AI ------------------------------------------------
 
 
+async def _adhoc_tts(text: str) -> Optional[str]:
+    """Synthesize `text` to a content-addressed wav under media/audio/adhoc/.
+
+    Repeated lines hit the cache (hash of the text). Returns the /media URL,
+    or None when TTS is unavailable or synthesis fails.
+    """
+    if not text or not config.tts_available():
+        return None
+    from app.commentary.tts import synth_wav
+
+    digest = hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+    out_path = config.MEDIA_DIR / "audio" / "adhoc" / f"{digest}.wav"
+    url = f"/media/audio/adhoc/{digest}.wav"
+    if out_path.exists() and out_path.stat().st_size > 0:
+        return url
+    ok = await asyncio.to_thread(synth_wav, text, out_path)
+    return url if ok else None
+
+
 @router.post("/commentary")
 async def post_commentary(body: Any = Body(None)):
     if not isinstance(body, dict) or not isinstance(body.get("event"), str):
@@ -99,7 +121,11 @@ async def post_commentary(body: Any = Body(None)):
         scoreB=body.get("scoreB"),
         style=body.get("style"),
     )
-    return await generate_commentary(req)
+    result = await generate_commentary(req)
+    if body.get("tts"):
+        result = dict(result)
+        result["audio_url"] = await _adhoc_tts(result.get("text") or "")
+    return result
 
 
 def _valid_card(body: Any) -> bool:
@@ -114,7 +140,11 @@ def _valid_card(body: Any) -> bool:
 async def post_scouting_report(body: Any = Body(None)):
     if not _valid_card(body):
         return JSONResponse(status_code=400, content={"error": "player_required"})
-    return await generate_scouting_report(body)
+    result = await generate_scouting_report(body)
+    if body.get("tts"):
+        result = dict(result)
+        result["audio_url"] = await _adhoc_tts(result.get("text") or "")
+    return result
 
 
 # --- Scout-card persistence + sharing ----------------------------------------

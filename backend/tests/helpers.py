@@ -384,3 +384,128 @@ def error_code(resp) -> Optional[str]:
     if isinstance(err, dict):
         return err.get("code")
     return err
+
+
+# ---------------------------------------------------------------------------
+# Bonus wave (live sessions + extras) shared factories — ADDITIVE ONLY.
+# ---------------------------------------------------------------------------
+
+LIVE_EVENT_KINDS = (
+    "score",
+    "whistle",
+    "jump",
+    "steal",
+    "streak",
+    "commentary",
+    "out_of_bounds",
+    "shot",
+    "highlight",
+)
+
+
+def live_event(
+    kind: str = "score",
+    t_ms: int = 15000,
+    team: Optional[str] = "A",
+    value: Optional[float] = None,
+    score_a: Optional[int] = None,
+    score_b: Optional[int] = None,
+    text: Optional[str] = None,
+    player_id: Optional[str] = None,
+    **extra: Any,
+) -> dict:
+    """Frontend-shaped live event: `t` in MILLISECONDS, camelCase score keys,
+    team as "A"/"B". None fields are omitted (frontends only send what they have).
+    """
+    ev: dict[str, Any] = {"id": f"lev_{kind}_{t_ms}", "t": int(t_ms), "kind": kind}
+    if team is not None:
+        ev["team"] = team
+    if value is not None:
+        ev["value"] = value
+    if score_a is not None:
+        ev["scoreA"] = score_a
+    if score_b is not None:
+        ev["scoreB"] = score_b
+    if text is not None:
+        ev["text"] = text
+    if player_id is not None:
+        ev["playerId"] = player_id
+    ev.update(extra)
+    return ev
+
+
+def create_live_session(
+    client,
+    title: str = "Test run",
+    team_a: str = "Red",
+    team_b: str = "Blue",
+) -> tuple[str, dict]:
+    """POST /api/live/sessions and return (session_id, response_body)."""
+    r = client.post(
+        "/api/live/sessions",
+        json={"title": title, "teamAName": team_a, "teamBName": team_b},
+    )
+    assert r.status_code == 201, f"POST /api/live/sessions -> {r.status_code}: {r.text[:300]}"
+    body = r.json()
+    sid = body.get("session_id") or body.get("id")
+    assert isinstance(sid, str) and sid, f"create-session response carries no session id: {body}"
+    return sid, body
+
+
+def post_live_events(client, session_id: str, events: list[dict]):
+    return client.post(f"/api/live/sessions/{session_id}/events", json={"events": events})
+
+
+def finish_live_session(
+    client,
+    session_id: str,
+    duration_ms: int = 300000,
+    publish_scout_card: Optional[dict] = None,
+):
+    payload: dict[str, Any] = {"durationMs": duration_ms}
+    if publish_scout_card is not None:
+        payload["publishScoutCard"] = publish_scout_card
+    return client.post(f"/api/live/sessions/{session_id}/finish", json=payload)
+
+
+def unwrap_list(body, *keys):
+    """Accept either a bare JSON list or a {key: [...]} envelope."""
+    if isinstance(body, list):
+        return body
+    if isinstance(body, dict):
+        for key in keys:
+            if isinstance(body.get(key), list):
+                return body[key]
+    raise AssertionError(f"expected a list (or one of {keys} keys), got: {type(body).__name__}")
+
+
+def make_tiny_video(tmp_path) -> str:
+    """Small REAL mp4 for upload tests: prefer the project's synthetic
+    generator; else 30 solid frames via cv2. (Mirrors test_games_api.)
+    """
+    import os
+
+    import pytest
+
+    out = str(tmp_path / "tiny.mp4")
+    try:
+        from app.cv import synthetic
+
+        try:
+            synthetic.generate_synthetic_game(out, duration_s=4.0, fps=30, size=(640, 360), seed=7)
+        except TypeError:
+            synthetic.generate_synthetic_game(out, 4.0, 30, (640, 360), 7)
+        if os.path.exists(out) and os.path.getsize(out) > 0:
+            return out
+    except Exception:
+        pass
+
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    writer = cv2.VideoWriter(out, cv2.VideoWriter_fourcc(*"mp4v"), 30, (320, 240))
+    assert writer.isOpened(), "cv2 could not open an mp4 writer"
+    frame = np.full((240, 320, 3), (40, 90, 160), dtype=np.uint8)
+    for _ in range(30):
+        writer.write(frame)
+    writer.release()
+    return out

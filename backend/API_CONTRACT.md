@@ -244,6 +244,148 @@ Commentary + scouting reports use a deterministic phrase engine offline; set
 `OPENAI_API_KEY` (and optionally `OPENAI_MODEL`) to upgrade both to LLM generation with
 automatic fallback. `/api/health` reports which mode is active via `llm`.
 
+## 7. Bonus endpoints (shot chart, reel, exports, ad-hoc TTS)
+
+### GET `/api/games/{game_id}/shotchart`
+Shot chart derived from the stored event stream (no reprocessing):
+```json
+{
+  "game_id": "g_ab12cd",
+  "shots": [
+    {"t": 34.2, "player_id": "p_1", "team": "a", "made": true, "points": 2,
+     "x": 5.91, "y": 8.4, "approx": true}
+  ]
+}
+```
+- `x`/`y` are court-space meters over the half court `[0, 14.325] x [0, 15.24]`
+  (rim center at `(1.575, 7.62)`, 3-point arc at 6.75 m).
+- Derivation: each `shot_attempt` event is a shot; it is `made` when a `score`
+  event of a compatible team follows within 2.0 s (that score supplies
+  team/player/points). Score events with no matching attempt (e.g. `g_sample`,
+  which has no `shot_attempt` events) still become made shots.
+- Events do not currently persist per-shot coordinates, so positions are
+  synthesized deterministically from the shot value (inside vs beyond the arc,
+  jitter seeded by `event_id`) and flagged `"approx": true`; if an event carries
+  `x`/`y` (or `court_xy`) it is used verbatim with `"approx": false`.
+- Empty `shots` list for games without shot activity; `404 game_not_found` envelope otherwise.
+
+### POST `/api/games/{game_id}/reel`
+Stitch the game's existing highlight clips into one `reel.mp4`
+(first clip's size/fps, others resized; a 0.5 s black title card with the
+highlight label precedes each clip). Built synchronously (highlights are
+capped at 12 short clips). Idempotent: if the reel already exists it is
+returned immediately with `"cached": true`.
+```json
+{"reel_url": "/media/highlights/g_ab12cd/reel.mp4", "clips": 6, "duration_s": 41.5, "cached": false}
+```
+`409 {"error": {"code": "no_highlights", ...}}` when the game has no highlight clip files
+(e.g. `g_sample`, whose highlights have no video files).
+
+### GET `/api/games/{game_id}/reel`
+`{"reel_url": "/media/highlights/{game_id}/reel.mp4", "duration_s": 41.5}` once built;
+`404 {"error": {"code": "reel_not_built", ...}}` before that.
+
+### GET `/api/games/{game_id}/export.json`
+Complete downloadable bundle (Content-Disposition attachment,
+`courtvision_{game_id}.json`):
+```json
+{"game": {...}, "events": [...], "analytics": {...}, "highlights": [...], "shotchart": {...}}
+```
+`analytics` is the empty-but-valid blob when the game has not finished processing.
+
+### GET `/api/games/{game_id}/export.csv`
+Events as CSV, columns `t,type,team,player_id,points,score_a,score_b,text`.
+Served UTF-8 **with BOM** (Excel-friendly) with a Content-Disposition
+attachment header (`courtvision_{game_id}.csv`). Null fields are empty cells.
+
+### Ad-hoc TTS on compat AI endpoints
+`POST /api/commentary` and `POST /api/ai/scouting-report` accept an optional
+`"tts": true` in the body. When set and TTS is available
+(`/api/config` → `features.tts_enabled`), the generated text is rendered to
+`media/audio/adhoc/{hash}.wav` (hash of the text, so repeats are cached) and the
+response gains `"audio_url": "/media/audio/adhoc/{hash}.wav"`; when TTS is
+unavailable or fails, `"audio_url": null`. Responses are unchanged when `tts`
+is absent (backward compatible).
+
+## 8. Live sessions (in-browser CV persistence + spectator mode)
+
+The web Live page runs CV in the browser and used to lose everything on
+refresh. Live sessions persist that stream and let spectators follow along.
+Bodies deliberately accept the **frontend event shape** (camelCase kinds from
+`packages/core` `EventKind`, `t` in **milliseconds** since session start):
+`{"id"?, "t", "kind", "team"? "A"|"B", "playerId"?/"player"?, "value"?, "text"?, "scoreA"?, "scoreB"?}`
+with kinds `score | out_of_bounds | whistle | jump | shot | steal | streak | highlight | commentary`.
+
+### POST `/api/live/sessions`
+Body (all optional): `{"title", "sport", "teamAName", "teamBName", "players": [{"name", "team"}]}`
+→ `201 {"session_id": "ls_xxx", "started_at": "..."}`. Session starts in status `live`.
+
+### POST `/api/live/sessions/{session_id}/events`
+Body: `{"events": [{...frontend event}, ...]}`. Events are appended to the
+session log and echoed to spectators on WS `/ws/live/{session_id}`.
+→ `{"accepted": n, "total": m}` (`total` = cumulative stored events).
+`404 session_not_found`; `409 {"error": {"code": "session_finished", ...}}` once finished;
+`422 invalid_events` for malformed bodies.
+
+### GET `/api/live/sessions` / GET `/api/live/sessions/{session_id}?limit=50`
+List (newest first, with `event_count`) / detail. Detail includes `events`:
+the **last** `limit` stored events in order (default 50, max 500). Fields:
+`session_id, title, sport, team_a_name, team_b_name, status live|finished,
+started_at, finished_at, duration_ms, game_id (once converted), players`.
+
+### POST `/api/live/sessions/{session_id}/finish`
+Body (all optional): `{"durationMs", "stats": {...free-form, "players": [frontend PlayerProfile]}, "publishScoutCard": {"playerName"}}`
+→ `{"game_id": "g_xxx", "scout_card_id"?: "..."}`, and:
+- marks the session `finished` (repeat finish → `409 session_finished`);
+- **converts the session into a regular completed game row** (status `done`)
+  so it shows up in `GET /api/games` with `/events` and `/boxscore` working.
+  Translation: `t` ms → seconds; kinds `score/out_of_bounds/whistle/streak/commentary`
+  map 1:1 to `EventType`, `shot` → `shot_attempt`, `jump/steal/highlight` →
+  `commentary` events preserving `text`; `score_after` from `scoreA`/`scoreB`
+  (or a running tally when absent); the timeline is bracketed with
+  `game_start`/`game_end`. `stats.players` (camelCase PlayerProfile:
+  `points/shots/makes/bestJumpCm/topReleaseMps/distanceM`) becomes the game's
+  analytics `players` blob, so converted games feed leaderboards;
+- with `publishScoutCard`, auto-creates a compat scout card (same shape and
+  storage as `POST /api/scout/profiles`, report auto-generated) for that player;
+- broadcasts a final `{"type": "status", "status": "finished", "game_id"}` frame
+  to spectators and closes the live stream.
+
+### WS `/ws/live/{session_id}`
+Spectator stream. On connect: `{"type": "status", "status": "live"|"finished"}`,
+then a replay of the **last 20** stored events, then live events as they are
+ingested until the session finishes (final status frame, then close). A
+finished session gets the tail replay and closes immediately. Unknown session:
+one `{"type": "status", "status": "error", ...}` frame, then close.
+
+## 9. Identity mapping
+
+CV-processed games tag events with track ids (`p_{track_id}`) that don't match
+roster ids (`p_{hex}`). Identify bridges the seam so career aggregation and the
+share page pick the game up.
+
+### POST `/api/games/{game_id}/identify`
+Body: `{"mapping": {"p_3": "p_ab12cd34", ...}}` (source id → roster player id).
+Rewrites `events.player_id` for that game, rewrites the analytics blob's
+`players[].player_id` **and** `name` (name pulled from the roster), and links
+the roster players to the game. → `{"events_updated": n, "analytics_updated": true|false}`.
+`404 game_not_found` / `404 roster_player_not_found` (nothing applied);
+`422 invalid_mapping` for an empty mapping.
+
+## 10. Leaderboards
+
+### GET `/api/leaderboards?category=points|vertical|speed|distance&limit=10`
+Aggregated across every **done** game's analytics blob, joined to roster names
+when the player id is in the roster. Career totals for `points`/`distance`;
+single-game bests for `vertical` (max_vertical_jump_cm) / `speed` (top_speed_ms).
+Invalid category deliberately falls back to `points` (mirrors `/api/leaders`);
+`limit` clamped to 1-50.
+```json
+{"category": "points", "leaders": [{"player_id": "p_1", "name": "Vihan", "value": 42, "games": 3}]}
+```
+Lives at `/api/leaderboards` (NOT under `/api/roster`) to avoid colliding with
+the `/api/roster/{player_id}` route.
+
 ## Error shape (contract endpoints)
 ```json
 { "error": {"code": "game_not_found", "message": "No game g_zzz"} }

@@ -85,6 +85,76 @@ def start_simulation(game_id: str, speed: float) -> bool:
     return True
 
 
+def _load_live_session(session_id: str) -> dict[str, Any] | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM live_sessions WHERE session_id = ?", (session_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+@router.websocket("/ws/live/{session_id}")
+async def live_session_socket(ws: WebSocket, session_id: str) -> None:
+    """Spectator stream for an in-browser CV live session.
+
+    On connect: one status frame, then a replay of the last 20 stored events,
+    then live events from the EventBus (key "live:{session_id}") until the
+    session finishes. Finished sessions get the tail replay and close.
+    """
+    from app.api.routes_live import live_bus_key, load_session_events
+
+    await ws.accept()
+    session = _load_live_session(session_id)
+    if session is None:
+        await ws.send_json(
+            {"type": "status", "status": "error", "error": f"No live session {session_id}"}
+        )
+        await ws.close()
+        return
+
+    def _tail() -> list[dict[str, Any]]:
+        with get_conn() as conn:
+            return load_session_events(conn, session_id, limit=20)
+
+    try:
+        if session["status"] != "live":
+            await ws.send_json({"type": "status", "status": "finished", "game_id": session["game_id"]})
+            for ev in _tail():
+                await ws.send_json(ev)
+            await ws.send_json({"type": "status", "status": "finished", "game_id": session["game_id"]})
+            await ws.close()
+            return
+
+        key = live_bus_key(session_id)
+        q = bus.subscribe(key)
+        seen: set[str] = set()
+        try:
+            await ws.send_json({"type": "status", "status": "live"})
+            for ev in _tail():
+                if ev.get("id"):
+                    seen.add(ev["id"])
+                await ws.send_json(ev)
+            while True:
+                item = await q.get()
+                if item is CLOSE:
+                    await ws.send_json({"type": "status", "status": "finished"})
+                    break
+                if isinstance(item, dict) and item.get("id") in seen:
+                    continue
+                await ws.send_json(item)
+                if (
+                    isinstance(item, dict)
+                    and item.get("type") == "status"
+                    and item.get("status") in ("finished", "error")
+                ):
+                    break
+        finally:
+            bus.unsubscribe(key, q)
+        await ws.close()
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+
+
 @router.websocket("/ws/games/{game_id}")
 async def game_socket(ws: WebSocket, game_id: str) -> None:
     await ws.accept()

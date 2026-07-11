@@ -11,6 +11,10 @@ Tables:
   analytics(game_id, json)            -- full GameAnalytics blob
   shares(share_token, player_id, created_at)
   scout_cards(id, created_at, json)   -- compat scout cards (createdAt in epoch ms)
+  live_sessions(session_id, title, sport, team_a_name, team_b_name, status,
+                created_at, finished_at, duration_ms, json_players, json_stats,
+                game_id)              -- in-browser CV sessions (status live|finished)
+  live_events(session_id, seq, json)  -- raw frontend-shaped events, append-only
 """
 from __future__ import annotations
 
@@ -86,6 +90,26 @@ CREATE TABLE IF NOT EXISTS scout_cards (
   id TEXT PRIMARY KEY,
   created_at INTEGER NOT NULL,
   json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS live_sessions (
+  session_id TEXT PRIMARY KEY,
+  title TEXT,
+  sport TEXT,
+  team_a_name TEXT,
+  team_b_name TEXT,
+  status TEXT NOT NULL DEFAULT 'live',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  finished_at TEXT,
+  duration_ms REAL,
+  json_players TEXT,
+  json_stats TEXT,
+  game_id TEXT
+);
+CREATE TABLE IF NOT EXISTS live_events (
+  session_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  json TEXT NOT NULL,
+  PRIMARY KEY (session_id, seq)
 );
 """
 
