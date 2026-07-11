@@ -10,10 +10,12 @@ cd backend
 uv venv --python 3.12 .venv          # or: python -m venv .venv
 .venv\Scripts\activate               # Windows  (source .venv/bin/activate elsewhere)
 uv pip install -r requirements.txt   # or: pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8787
 ```
 
-Open http://localhost:8000/docs for live interactive API docs.
+Port **8787** matters: the web frontend (`apps/web`) points at
+`http://localhost:8787` by default. Open http://localhost:8787/docs for live
+interactive API docs.
 
 **Frontend devs:** read [`API_CONTRACT.md`](API_CONTRACT.md). You do not need a real
 game video to build UI — `POST /api/games/g_sample/simulate` streams a realistic fake

@@ -10,6 +10,7 @@ Tables:
   highlights(highlight_id, game_id, t_start, t_end, label, video_url, thumb_url)
   analytics(game_id, json)            -- full GameAnalytics blob
   shares(share_token, player_id, created_at)
+  scout_cards(id, created_at, json)   -- compat scout cards (createdAt in epoch ms)
 """
 from __future__ import annotations
 
@@ -80,6 +81,11 @@ CREATE TABLE IF NOT EXISTS shares (
   share_token TEXT PRIMARY KEY,
   player_id TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE IF NOT EXISTS scout_cards (
+  id TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL,
+  json TEXT NOT NULL
 );
 """
 
