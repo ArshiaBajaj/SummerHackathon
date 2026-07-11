@@ -1,0 +1,36 @@
+{
+  "name": "courtvision-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Anact Ortho — Edge-native referee, commentator, and scout. Monorepo hosting the mobile app, web landing/demo, and shared TypeScript packages.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace apps/web",
+    "build": "npm run build --workspace apps/web",
+    "web:dev": "npm run dev --workspace apps/web",
+    "web:build": "npm run build --workspace apps/web",
+    "web:preview": "npm run preview --workspace apps/web",
+    "server:dev": "npm run dev --workspace apps/server",
+    "server:start": "npm run start --workspace apps/server",
+    "server:build": "npm run build --workspace apps/server",
+    "dev:all": "npm run server:start & npm run dev",
+    "mobile:start": "npm run start --workspace apps/mobile",
+    "mobile:ios": "npm run ios --workspace apps/mobile",
+    "mobile:android": "npm run android --workspace apps/mobile",
+    "mobile:prebuild": "npm run prebuild --workspace apps/mobile",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20.10"
+  },
+  "overrides": {
+    "@courtvision/web": {
+      "react": "18.2.0",
+      "react-dom": "18.2.0"
+    }
+  }
+}

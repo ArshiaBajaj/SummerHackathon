@@ -1,0 +1,90 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  background: #050914;
+  color: #e6ecff;
+  font-family: "Inter", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background:
+    radial-gradient(60% 45% at 12% 5%, rgba(255, 91, 31, 0.14) 0%, rgba(5, 9, 20, 0) 60%),
+    radial-gradient(50% 40% at 92% 90%, rgba(34, 211, 238, 0.14) 0%, rgba(5, 9, 20, 0) 60%),
+    #050914;
+}
+
+@layer components {
+  .panel {
+    @apply bg-court-panel/70 backdrop-blur-md border border-white/5 rounded-2xl;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] uppercase tracking-widest font-semibold bg-white/5 border border-white/10 text-white/70;
+  }
+  .btn-primary {
+    @apply inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-court-accent to-court-accent2 px-5 py-3 font-semibold text-black shadow-glow hover:brightness-110 active:brightness-95 transition;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-white/80 hover:bg-white/[0.06] hover:text-white transition;
+  }
+  .stat-num {
+    @apply font-display text-3xl md:text-4xl font-semibold tracking-tight text-white;
+  }
+  .stat-label {
+    @apply text-[11px] uppercase tracking-[0.18em] text-white/50 font-semibold;
+  }
+  .kbd {
+    @apply px-1.5 py-0.5 rounded-md border border-white/10 bg-white/5 text-[10px] font-mono text-white/70;
+  }
+}
+
+.court-lines {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* subtle scanline for the "on-air" broadcast feel */
+.scanlines::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.03) 0px,
+    rgba(255, 255, 255, 0.03) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  pointer-events: none;
+  mix-blend-mode: overlay;
+}
+
+/* thin scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
