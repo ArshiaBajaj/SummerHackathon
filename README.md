@@ -105,18 +105,36 @@ npm run web:dev
 
 Great for demoing to judges who don't have your Xcode setup — the web build shows the pitch, calibration flow, sample dashboards, and shareable scout card.
 
-### Backend (`apps/server`) — real NBA data + Film Room + scout persistence
+### Backend (`backend/`) — the full Python API: video pipeline + NBA data + Film Room + scout persistence
+
+The production backend is the Python FastAPI service in [`backend/`](backend/README.md). It serves
+**everything `apps/server` serves** (same routes, same JSON, same port 8787 — the web app needs zero
+config changes) **plus** the real video-processing pipeline: upload a courtside video and get
+automated officiating events, live WebSocket streaming, commentary with offline TTS audio,
+highlight clips + stitched reels, shot charts, heatmaps, jump/velocity metrics, box scores,
+live-session persistence for the web Live page, leaderboards, and public share links.
+Full API reference: [`backend/API_CONTRACT.md`](backend/API_CONTRACT.md). 91-test pytest suite.
 
 ```bash
-# Terminal 1 — start the API (http://localhost:8787)
-npm run server:start        # dev: npm run server:dev (hot reload)
+# Terminal 1 — start the API (http://localhost:8787); first run bootstraps its own venv
+backend/run.sh              # Windows: backend\run.ps1
+
+# Optional: seed a fully processed demo game (real highlights, no phone footage needed)
+cd backend && .venv/bin/python -m app.demo    # Windows: .venv\Scripts\python.exe -m app.demo
 
 # Terminal 2 — start the web app
 npm run dev                 # http://localhost:5173
-
-# …or run both together:
-npm run dev:all
 ```
+
+<details>
+<summary>Legacy TS stub (<code>apps/server</code>) — superseded by <code>backend/</code>, kept for reference</summary>
+
+```bash
+npm run server:start        # dev: npm run server:dev (hot reload)
+npm run dev:all             # server + web together
+```
+
+</details>
 
 Verify it's live:
 
@@ -146,13 +164,14 @@ curl http://localhost:8787/api/health
 
 **No.** The whole product runs end-to-end with **zero keys, zero network** — that's the edge-first thesis. Commentary and scouting reports come from a built-in deterministic engine.
 
-**Optionally**, drop a key into `apps/server/.env` to upgrade those two features to model-generated text:
+**Optionally**, set an `OPENAI_API_KEY` environment variable before starting `backend/` (or drop a key into `apps/server/.env` for the legacy stub) to upgrade those two features to model-generated text:
 
 ```bash
-cp apps/server/.env.example apps/server/.env
-# then edit:
-OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4o-mini   # optional, this is the default
+# Python backend: export before running
+export OPENAI_API_KEY=sk-...          # Windows: $env:OPENAI_API_KEY="sk-..."
+OPENAI_MODEL=gpt-4o-mini              # optional, this is the default
+
+# legacy stub: cp apps/server/.env.example apps/server/.env and edit
 ```
 
 When a key is present, `/api/commentary` and `/api/ai/scouting-report` return `"source": "llm"`; otherwise `"source": "engine"`. Either way the app works.
