@@ -109,4 +109,8 @@ export const api = {
     get<{ card: unknown }>(`/api/scout/profiles/${id}`, signal),
   scoutingReport: (card: unknown) =>
     post<{ text: string; source: string }>("/api/ai/scouting-report", card),
+
+  /** Film Room AI coach — always prefer try/catch + local filmCoach fallbacks. */
+  filmAi: (body: Record<string, unknown>) =>
+    post<Record<string, unknown>>("/api/ai/film", body),
 };

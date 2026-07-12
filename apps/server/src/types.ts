@@ -71,7 +71,7 @@ export interface FilmGame {
   teamB: { tricode: string; name: string; color: string; final: number };
   headline: string;
   starLine: string;    // real box-score line
-  youtubeUrl: string;  // real footage (opened externally)
+  youtubeUrl: string;  // real footage (embedded in Film Room)
   durationMs: number;
   tags: string[];
 }

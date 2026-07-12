@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { StyleSheet, View } from "react-native";
+import { Share, StyleSheet, View } from "react-native";
 import Svg, { Circle, G, Line, Path as SvgPath, Polygon, Rect } from "react-native-svg";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -26,6 +26,41 @@ export default function ScoutScreen() {
   const dataScoreB = lastResult?.scoreB ?? engine.scoreB;
   const dataDuration = lastResult?.duration ?? elapsed;
   const hasData = dataEvents.length > 0 || dataHeat.length > 0;
+
+  const you = dataPlayers.find((p) => p.team === "A") ?? dataPlayers[0];
+
+  const buildSnapshot = () => ({
+    duration: dataDuration,
+    scoreA: dataScoreA,
+    scoreB: dataScoreB,
+    players: dataPlayers,
+    events: dataEvents,
+    heat: dataHeat,
+    exportedAt: new Date().toISOString(),
+  });
+
+  const onShare = async () => {
+    if (!you) return;
+    try {
+      await Share.share({
+        title: "Anact Ortho Scout Card",
+        message: `Peep my Anact Ortho scout card — ${you.points} pts, ${you.bestJumpCm.toFixed(0)}cm vertical, ${you.topReleaseMps.toFixed(1)} m/s release.`,
+      });
+    } catch {
+      // user cancelled or share sheet unavailable — no-op
+    }
+  };
+
+  const onExportJson = async () => {
+    try {
+      await Share.share({
+        title: "Anact Ortho match export",
+        message: JSON.stringify(buildSnapshot(), null, 2),
+      });
+    } catch {
+      // user cancelled or share sheet unavailable — no-op
+    }
+  };
 
   if (!hasData) {
     return (
@@ -91,17 +126,13 @@ export default function ScoutScreen() {
           <Button
             label="Share scout card"
             variant="secondary"
-            onPress={() => {
-              /* TODO: expo-sharing hook up */
-            }}
+            onPress={() => void onShare()}
             leadingIcon={<Ionicons name="share-social-outline" size={16} color={theme.colors.secondary} />}
           />
           <Button
             label="Export JSON"
             variant="ghost"
-            onPress={() => {
-              /* TODO: expo-file-system + expo-sharing */
-            }}
+            onPress={() => void onExportJson()}
           />
         </View>
       </Card>

@@ -55,8 +55,9 @@ export class BallTracker {
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
-        // Orange hue heuristic
-        const isOrange = r > 130 && g > 55 && g < 170 && b < 110 && r > g && g > b;
+        // Orange hue heuristic — widened to also catch yellowish/brown/worn
+        // basketballs, not just the saturated "new ball" orange.
+        const isOrange = r > 100 && g > 40 && g < 200 && b < 130 && r >= g && r - b > 25;
         if (!isOrange) continue;
         let motion = 40;
         if (prev) {

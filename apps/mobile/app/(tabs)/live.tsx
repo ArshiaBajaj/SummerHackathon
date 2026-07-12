@@ -15,7 +15,7 @@ import { theme } from "@/design/theme";
 import { pickPipelineFormat, TARGET_FPS } from "@/camera/format";
 import { analyzeFrame, type FrameAnalysis } from "@/camera/frameProcessor";
 import { pushAnalysis, useLatestAnalysis } from "@/camera/frameBus";
-import { SpatialEngine } from "@/engine/spatialEngineNative";
+import { isNativeSpatialEngine, SpatialEngine } from "@/engine/spatialEngineNative";
 import { playScoreCue, playWhistle } from "@/audio/whistle";
 import { speak, stopSpeaking } from "@/tts/speak";
 
@@ -302,6 +302,10 @@ export default function LiveScreen() {
             label={whistleEnabled ? "Whistle · on" : "Whistle · off"}
             tone={whistleEnabled ? "primary" : "neutral"}
             leadingDot
+          />
+          <Chip
+            label={isNativeSpatialEngine ? "Native engine" : "TS engine"}
+            tone={isNativeSpatialEngine ? "primary" : "neutral"}
           />
         </View>
         <View style={styles.togglesRow}>

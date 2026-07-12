@@ -23,6 +23,15 @@ from app.commentary.generator import (
     generate_commentary,
     generate_scouting_report,
 )
+from app.commentary.film_coach import (
+    answer_film_question,
+    as_film_context,
+    generate_chapters,
+    generate_coach_line,
+    generate_moment,
+    generate_quiz,
+    generate_recap,
+)
 from app.db import get_conn
 
 router = APIRouter(tags=["compat"])
@@ -145,6 +154,40 @@ async def post_scouting_report(body: Any = Body(None)):
         result = dict(result)
         result["audio_url"] = await _adhoc_tts(result.get("text") or "")
     return result
+
+
+@router.post("/ai/film")
+async def post_film_ai(body: Any = Body(None)):
+    """Film Room coach: line | ask | moment | quiz | chapters | recap."""
+    if not isinstance(body, dict):
+        return JSONResponse(status_code=400, content={"error": "film_context_required"})
+    film = as_film_context(body)
+    if film is None:
+        return JSONResponse(status_code=400, content={"error": "film_context_required"})
+    action = str(body.get("action") or "")
+    try:
+        if action == "line":
+            return await generate_coach_line(film)
+        if action == "ask":
+            return await answer_film_question(film, str(body.get("question") or ""))
+        if action == "moment":
+            return await generate_moment(film)
+        if action == "quiz":
+            return await generate_quiz(film)
+        if action == "chapters":
+            timeline = body.get("timeline") if isinstance(body.get("timeline"), list) else []
+            return await generate_chapters(film, timeline)
+        if action == "recap":
+            return await generate_recap(film)
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "invalid_action",
+                "hint": "line | ask | moment | quiz | chapters | recap",
+            },
+        )
+    except Exception:
+        return JSONResponse(status_code=500, content={"error": "film_ai_failed"})
 
 
 # --- Scout-card persistence + sharing ----------------------------------------

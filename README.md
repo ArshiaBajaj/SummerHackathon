@@ -7,11 +7,11 @@ Anact Ortho turns any smartphone mounted courtside into a real-time referee, pla
 This repository is an **npm-workspaces monorepo** hosting:
 
 - `apps/mobile` — the production React Native + Expo dev-client app. Ships native C++ / Swift / Kotlin bridges, TFLite / CoreML models, and the 30 fps / 720p frame-processor pipeline.
-- `apps/web` — the public web workspace (Vite + React 18) used as the shareable scout-card viewer, the marketing landing page, the **Film Room** (real NBA games replayed through the broadcast HUD), and the "try in your browser" demo mode.
+- `apps/web` — the public web workspace (Vite + React 18) used as the shareable scout-card viewer, the marketing landing page, the **Film Room** (real NBA games replayed through the broadcast HUD — the play-by-play *timing* is a deterministic reconstruction, not raw box-score data; see "What's real" below), a **`/process`** page for the actual courtside-video pipeline (upload → CV officiating → highlights), and the "try in your browser" demo mode.
 - `apps/server` — the Anact Ortho **backend** (Express + TypeScript). Serves real 2023-24 NBA data, film-room replay timelines, scout-card persistence, and optional LLM-powered commentary / scouting reports. Runs standalone; the app also works fully offline without it.
 - `packages/core` — pure-TypeScript domain layer: types, sport profiles, scoring state machine, commentary engine, Zustand store. Used by both apps.
 - `packages/vision` — platform-agnostic CV math: homography DLT solver, kinematic ball predictor, jump/release trackers, ball-color prior.
-- `packages/tokens` — design system: slate-900 palette + emerald-500 / indigo-500 accents, typography scale, spacing, shadows, motion. Shared between web (Tailwind preset) and mobile (RN theme).
+- `packages/tokens` — design system: slate-900 palette + `#ff5b1f` / `#22d3ee` brand accents (aligned with the web app), typography scale, spacing, shadows, motion. Shared between web (Tailwind preset) and mobile (RN theme).
 
 ## Repository layout
 
@@ -69,8 +69,8 @@ Following the spec exactly:
 | --- | --- |
 | Base surface | slate-900 (#0f172a) — never pure black |
 | Elevated surface | slate-800 (#1e293b) |
-| Primary action | emerald-500 (#10b981) |
-| Secondary action | indigo-500 (#6366f1) |
+| Primary action | orange (#ff5b1f) — matches the web brand |
+| Secondary action | cyan (#22d3ee) — matches the web brand |
 | Danger / whistle | rose-500 (#f43f5e) |
 | Warning / streak | amber-500 (#f59e0b) |
 | Typography | Inter / Geist |
@@ -103,7 +103,17 @@ npm run web:dev
 # → http://localhost:5173
 ```
 
-Great for demoing to judges who don't have your Xcode setup — the web build shows the pitch, calibration flow, sample dashboards, and shareable scout card.
+**Judges / full demo:** run the API too — Recruit hard-requires it.
+
+```bash
+# Terminal 1
+bash backend/run.sh
+
+# Terminal 2
+npm run dev
+```
+
+Or `npm run dev:all` (backend + web). Film works offline with bundled games; Live needs a camera (+ CDN pose on first visit); Recruit needs `:8787`.
 
 ### Backend (`backend/`) — the full Python API: video pipeline + NBA data + Film Room + scout persistence
 
@@ -113,7 +123,7 @@ config changes) **plus** the real video-processing pipeline: upload a courtside 
 automated officiating events, live WebSocket streaming, commentary with offline TTS audio,
 highlight clips + stitched reels, shot charts, heatmaps, jump/velocity metrics, box scores,
 live-session persistence for the web Live page, leaderboards, and public share links.
-Full API reference: [`backend/API_CONTRACT.md`](backend/API_CONTRACT.md). 91-test pytest suite.
+Full API reference: [`backend/API_CONTRACT.md`](backend/API_CONTRACT.md). ~77-test pytest suite.
 
 ```bash
 # Terminal 1 — start the API (http://localhost:8787); first run bootstraps its own venv
@@ -129,9 +139,11 @@ npm run dev                 # http://localhost:5173
 <details>
 <summary>Legacy TS stub (<code>apps/server</code>) — superseded by <code>backend/</code>, kept for reference</summary>
 
+`npm run server:start` and `npm run server:dev` now both just run `backend/run.sh` — the Python backend. To run the old Express/TS stub instead:
+
 ```bash
-npm run server:start        # dev: npm run server:dev (hot reload)
-npm run dev:all             # server + web together
+npm run server:legacy       # apps/server (Express + TS), not the Python backend
+npm run dev:all             # backend/run.sh + web together
 ```
 
 </details>
@@ -158,11 +170,11 @@ curl http://localhost:8787/api/health
 | POST | `/api/scout/profiles` | Publish a shareable scout card |
 | GET | `/api/scout/profiles/:id` | Fetch a published card |
 
-**What's real:** the player averages (e.g. Embiid 34.7, Luka 33.9, Giannis 30.4), team colors, and the games' final scores / dates / star box-score lines (Luka's 73-point game, Embiid's 70, the 2024 Finals Game 5 clincher) are all real. The play-by-play *timing* inside a replay is a deterministic reconstruction seeded from the real final score — the Film Room's "Watch the real footage" button links out to the actual highlights.
+**What's real:** the player averages (e.g. Embiid 34.7, Luka 33.9, Giannis 30.4), team colors, and the games' final scores / dates / star box-score lines (Luka's 73-point game, Embiid's 70, the 2024 Finals Game 5 clincher) are all real. The play-by-play *timing* inside a Film Room replay is a **reconstructed** deterministic sequence seeded from the real final score — it is not the actual play-by-play feed. The Film Room's "Watch the real footage" button links out to the actual highlights. If you want the real CV pipeline running against real footage (not a reconstruction), use the **`/process`** page in the web app to upload courtside video.
 
 ### Do you need an OpenAI key?
 
-**No.** The whole product runs end-to-end with **zero keys, zero network** — that's the edge-first thesis. Commentary and scouting reports come from a built-in deterministic engine.
+**No.** The core experience runs end-to-end with **zero keys** — commentary and scouting reports come from a built-in deterministic engine, and pose/ball tracking run entirely in the browser/on-device. This isn't a zero-network guarantee, though: the web app's pose model + WASM runtime are fetched from a CDN on first load (a few MB, once), and `apps/web/public/sw.js` caches those assets afterward so subsequent sessions survive a flaky connection.
 
 **Optionally**, set an `OPENAI_API_KEY` environment variable before starting `backend/` (or drop a key into `apps/server/.env` for the legacy stub) to upgrade those two features to model-generated text:
 
@@ -217,9 +229,11 @@ These stubs are complete enough to compile and register with React Native; the p
 | --- | --- |
 | `npm run typecheck` | Typecheck every workspace |
 | `npm run dev` | Vite dev server for the web workspace |
-| `npm run dev:all` | Backend API + web dev server together |
-| `npm run server:start` | Start the backend API (port 8787) |
-| `npm run server:dev` | Backend API with hot reload |
+| `npm run dev:all` | Backend API (`backend/run.sh`) + web dev server together |
+| `npm run backend:start` | Start the Python backend API via `backend/run.sh` (port 8787) |
+| `npm run server:start` | Alias for `backend:start` — this is what actually runs now |
+| `npm run server:dev` | Alias for `backend:start` |
+| `npm run server:legacy` | Start the old `apps/server` Express/TS stub instead (superseded, kept for reference) |
 | `npm run web:dev` | Vite dev server for the web workspace |
 | `npm run web:build` | Production web bundle |
 | `npm run mobile:start` | Metro bundler for the dev-client |

@@ -8,17 +8,17 @@ import {
   Volume2,
   VolumeX,
   Siren,
-  Cpu,
-  Wifi,
-  Camera,
   RotateCw,
   Sparkles,
   Plus,
-  ChevronRight,
+  Crosshair,
   Zap,
+  Upload,
 } from "lucide-react";
 import { useCamera } from "@/lib/useCamera";
 import { useGame } from "@/state/gameStore";
+import { CourtSetup } from "@/pages/Calibrate";
+import { LiveSteps } from "@/components/LiveSteps";
 import {
   getPoseLandmarker,
   POSE_CONNECTIONS,
@@ -28,6 +28,7 @@ import {
 import type { PoseSample } from "@/lib/pose";
 import { BallTracker, pointInQuad } from "@/lib/ball";
 import type { BallSample } from "@/lib/ball";
+import { AutoScorer } from "@/lib/autoScore";
 import {
   playCrowdShimmer,
   playScoreBlip,
@@ -65,6 +66,7 @@ export function Live() {
     pauseGame,
     resumeGame,
     endGame,
+    resetGame,
     tick,
     addScore,
     addEvent,
@@ -75,7 +77,23 @@ export function Live() {
     toggleWhistle,
   } = useGame();
 
-  const { videoRef, status, start, flip } = useCamera();
+  const [phase, setPhase] = useState<"setup" | "session">("setup");
+  const [possession, setPossession] = useState<"A" | "B">("A");
+  const [autoScoreOn, setAutoScoreOn] = useState(false);
+
+  const {
+    videoRef,
+    status,
+    error: cameraError,
+    source,
+    fileName,
+    start,
+    stop,
+    flip,
+    loadFile,
+    reattach,
+  } = useCamera();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const analysisCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -83,6 +101,8 @@ export function Live() {
   const jumpTrackerRef = useRef(new JumpTracker());
   const releaseTrackerRef = useRef(new ReleaseVelocityTracker());
   const ballTrackerRef = useRef(new BallTracker());
+  const autoScorerRef = useRef(new AutoScorer());
+  const autoScoreOnRef = useRef(false);
   const lastBallRef = useRef<BallSample | null>(null);
   const lastOutOfBoundsAtRef = useRef(0);
   const lastCommentaryAtRef = useRef(0);
@@ -97,6 +117,53 @@ export function Live() {
   useEffect(() => {
     cornersRef.current = courtCorners;
   }, [courtCorners]);
+
+  useEffect(() => {
+    autoScoreOnRef.current = autoScoreOn;
+  }, [autoScoreOn]);
+
+  useEffect(() => {
+    autoScorerRef.current.setPossession(possession);
+  }, [possession]);
+
+  // Always land on setup with a shared video source. Session remounts <video>,
+  // so reattach the clip after the new element mounts.
+  useEffect(() => {
+    if (phase !== "session") return;
+    let cancelled = false;
+    const tryAttach = () => {
+      if (cancelled) return;
+      if (!videoRef.current) {
+        requestAnimationFrame(tryAttach);
+        return;
+      }
+      if (fileName || source === "file") void reattach();
+    };
+    requestAnimationFrame(tryAttach);
+    return () => {
+      cancelled = true;
+    };
+  }, [phase, reattach, source, fileName, videoRef]);
+
+  const onPickVideo = useCallback(
+    (file: File | undefined) => {
+      if (!file) return;
+      void loadFile(file);
+    },
+    [loadFile],
+  );
+
+  const enterSession = useCallback(() => {
+    if (useGame.getState().courtCorners.length !== 4) {
+      useGame.getState().setCourtCorners([
+        { x: 0.14, y: 0.24 },
+        { x: 0.86, y: 0.24 },
+        { x: 0.94, y: 0.9 },
+        { x: 0.06, y: 0.9 },
+      ]);
+    }
+    setPhase("session");
+  }, []);
 
   useEffect(() => {
     primeSpeechEngine();
@@ -195,6 +262,7 @@ export function Live() {
     jumpTrackerRef.current = new JumpTracker();
     releaseTrackerRef.current = new ReleaseVelocityTracker();
     ballTrackerRef.current.reset();
+    autoScorerRef.current.reset();
     lastBallRef.current = null;
     const s = useGame.getState();
     commentate(introLine(s.commentaryStyle), true);
@@ -207,12 +275,29 @@ export function Live() {
     nav("/analytics");
   }, [endGame, nav]);
 
+  const onNewGame = useCallback(() => {
+    stopSpeaking();
+    resetGame();
+    setCaption("Waiting for tip-off…");
+    ballTrackerRef.current.reset();
+    autoScorerRef.current.reset();
+    lastBallRef.current = null;
+  }, [resetGame]);
+
+  const onResumeGame = useCallback(() => {
+    startedAtRef.current = performance.now() - useGame.getState().elapsed;
+    resumeGame();
+  }, [resumeGame]);
+
   useEffect(() => {
     if (!running) return;
+    let cancelled = false;
     let frameCount = 0;
     let fpsAt = performance.now();
 
     const loop = async () => {
+      if (cancelled || !useGame.getState().running) return;
+
       const now = performance.now();
       const el = now - startedAtRef.current;
       tick(el);
@@ -228,13 +313,7 @@ export function Live() {
       const overlay = overlayCanvasRef.current;
       const analysis = analysisCanvasRef.current;
 
-      if (
-        video &&
-        video.readyState >= 2 &&
-        overlay &&
-        analysis &&
-        modelReady
-      ) {
+      if (video && video.readyState >= 2 && overlay && analysis) {
         const vw = video.videoWidth;
         const vh = video.videoHeight;
         if (vw && vh) {
@@ -272,6 +351,17 @@ export function Live() {
                     handleWhistle("Ball out of bounds");
                   }
                 }
+                if (autoScoreOnRef.current) {
+                  const hit = autoScorerRef.current.observe(
+                    now,
+                    freshBall,
+                    cornersRef.current,
+                  );
+                  if (hit) {
+                    doAddScore(hit.team, hit.points);
+                    setPossession((p) => (p === "A" ? "B" : "A"));
+                  }
+                }
               } else {
                 setBallConfidence(0);
               }
@@ -280,66 +370,78 @@ export function Live() {
             }
           }
 
-          const lm = await getPoseLandmarker();
-          const result = lm.detectForVideo(video, now);
-          setPoseLandmarkCount(result?.landmarks?.[0]?.length ?? 0);
-          drawOverlay(overlay, result, freshBall, cornersRef.current);
+          let poseResult: PoseSample | null = null;
 
-          // Jump & release velocity tracking from landmarks
-          if (result?.landmarks?.length) {
-            const lms = result.landmarks[0];
-            const nose = lms[0];
-            const leftAnkle = lms[27];
-            const rightAnkle = lms[28];
-            const rightWrist = lms[16];
-            if (nose && leftAnkle && rightAnkle && rightWrist) {
-              const ankleY = (leftAnkle.y + rightAnkle.y) / 2;
-              const body = Math.max(0.15, ankleY - nose.y);
-              const jump = jumpTrackerRef.current.update(ankleY, nose.y, now);
-              if (jump) {
-                updateJump("p1", jump);
-                const s = useGame.getState();
-                addEvent({ kind: "jump", team: "A", value: jump });
-                playCrowdShimmer();
-                commentate(
-                  jumpLine(s.commentaryStyle, {
-                    team: "A",
-                    scoreA: s.scoreA,
-                    scoreB: s.scoreB,
-                    jumpCm: jump,
-                  }),
-                  true,
-                );
+          if (modelReady) {
+            try {
+              const lm = await getPoseLandmarker();
+              if (cancelled || !useGame.getState().running) return;
+              poseResult = lm.detectForVideo(video, now);
+              setPoseLandmarkCount(poseResult?.landmarks?.[0]?.length ?? 0);
+
+              if (poseResult?.landmarks?.length) {
+                const lms = poseResult.landmarks[0];
+                const nose = lms[0];
+                const leftAnkle = lms[27];
+                const rightAnkle = lms[28];
+                const rightWrist = lms[16];
+                if (nose && leftAnkle && rightAnkle && rightWrist) {
+                  const ankleY = (leftAnkle.y + rightAnkle.y) / 2;
+                  const body = Math.max(0.15, ankleY - nose.y);
+                  const jump = jumpTrackerRef.current.update(ankleY, nose.y, now);
+                  if (jump) {
+                    updateJump("p1", jump);
+                    const s = useGame.getState();
+                    addEvent({ kind: "jump", team: "A", value: jump });
+                    playCrowdShimmer();
+                    commentate(
+                      jumpLine(s.commentaryStyle, {
+                        team: "A",
+                        scoreA: s.scoreA,
+                        scoreB: s.scoreB,
+                        jumpCm: jump,
+                      }),
+                      true,
+                    );
+                  }
+                  const rel = releaseTrackerRef.current.update(
+                    rightWrist.x,
+                    rightWrist.y,
+                    body,
+                    now,
+                  );
+                  if (rel) {
+                    updateRelease("p1", rel);
+                    const s = useGame.getState();
+                    addEvent({ kind: "shot", team: "A", value: rel });
+                    commentate(
+                      releaseLine(s.commentaryStyle, {
+                        team: "A",
+                        scoreA: s.scoreA,
+                        scoreB: s.scoreB,
+                        releaseMps: rel,
+                      }),
+                    );
+                  }
+                }
               }
-              const rel = releaseTrackerRef.current.update(
-                rightWrist.x,
-                rightWrist.y,
-                body,
-                now,
-              );
-              if (rel) {
-                updateRelease("p1", rel);
-                const s = useGame.getState();
-                addEvent({ kind: "shot", team: "A", value: rel });
-                commentate(
-                  releaseLine(s.commentaryStyle, {
-                    team: "A",
-                    scoreA: s.scoreA,
-                    scoreB: s.scoreB,
-                    releaseMps: rel,
-                  }),
-                );
-              }
+            } catch {
+              // pose optional — ball path already ran
             }
           }
+
+          drawOverlay(overlay, poseResult, freshBall, cornersRef.current);
         }
       }
 
-      rafRef.current = requestAnimationFrame(() => void loop());
+      if (!cancelled && useGame.getState().running) {
+        rafRef.current = requestAnimationFrame(() => void loop());
+      }
     };
 
     rafRef.current = requestAnimationFrame(() => void loop());
     return () => {
+      cancelled = true;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
   }, [
@@ -353,6 +455,7 @@ export function Live() {
     updateRelease,
     addEvent,
     commentate,
+    doAddScore,
   ]);
 
   const elapsedFormatted = useMemo(() => formatDuration(elapsed), [elapsed]);
@@ -362,30 +465,100 @@ export function Live() {
     ? `Team ${streakTeam} · ${streakCount} straight`
     : "";
 
+  if (phase === "setup") {
+    return (
+      <div>
+        <LiveSteps current="setup" />
+        <CourtSetup
+          onReady={enterSession}
+          video={{
+            videoRef,
+            status,
+            error: cameraError,
+            source,
+            fileName,
+            start,
+            stop,
+            flip,
+            loadFile,
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
+      <LiveSteps current="live" />
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em]">
             <span className="flex items-center gap-1.5 text-court-rose">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-court-rose" />
-              Live
+              On air
             </span>
-            <span className="text-white/40">
-              {elapsedFormatted} · {fps} fps · {modelReady ? "model ready" : "loading model"}
+            <span className="font-mono text-[11px] normal-case tracking-normal text-court-muted">
+              {elapsedFormatted} · {fps} fps · {modelReady ? "ready" : "loading"}
+              {fileName ? ` · ${fileName}` : ""}
             </span>
           </div>
-          <h1 className="font-display text-2xl md:text-3xl">Court is in session</h1>
+          <h1 className="font-brand text-3xl tracking-[0.02em] md:text-4xl">
+            Court is in session
+          </h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="video/mp4,video/quicktime,video/webm,video/x-msvideo,.mp4,.mov,.webm,.avi,.mkv"
+            className="hidden"
+            onChange={(e) => {
+              onPickVideo(e.target.files?.[0]);
+              e.target.value = "";
+            }}
+          />
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <Upload className="h-4 w-4" />
+            {fileName ? "Swap video" : "Upload video"}
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => setPhase("setup")}
+          >
+            <Crosshair className="h-4 w-4" />
+            Recalibrate
+          </button>
+          <button
+            type="button"
+            className={`chip ${autoScoreOn ? "!border-court-accent/50 !text-court-accent" : ""}`}
+            onClick={() => setAutoScoreOn((v) => !v)}
+          >
+            <Sparkles className="h-3 w-3" />
+            Auto-score {autoScoreOn ? "ON" : "OFF"}
+          </button>
+          <div className="inline-flex rounded-lg border border-white/10 p-0.5 text-[11px] font-semibold">
+            <button
+              type="button"
+              className={`rounded-md px-2 py-1 ${possession === "A" ? "bg-white text-black" : "text-court-muted"}`}
+              onClick={() => setPossession("A")}
+            >
+              Poss A
+            </button>
+            <button
+              type="button"
+              className={`rounded-md px-2 py-1 ${possession === "B" ? "bg-white text-black" : "text-court-muted"}`}
+              onClick={() => setPossession("B")}
+            >
+              Poss B
+            </button>
+          </div>
           <TogglePill on={ttsEnabled} onClick={toggleTts} onIcon={Volume2} offIcon={VolumeX} label="TTS" />
           <TogglePill on={whistleEnabled} onClick={toggleWhistle} onIcon={Siren} offIcon={Siren} label="Whistle" />
-          <span className="chip">
-            <Cpu className="h-3 w-3" /> On-device
-          </span>
-          <span className="chip">
-            <Wifi className="h-3 w-3" /> Offline OK
-          </span>
         </div>
       </header>
 
@@ -398,29 +571,43 @@ export function Live() {
               playsInline
               autoPlay
               muted
-              className="absolute inset-0 h-full w-full object-cover"
+              className="absolute inset-0 h-full w-full object-contain"
             />
             <canvas
               ref={overlayCanvasRef}
-              className="pointer-events-none absolute inset-0 h-full w-full"
+              className="pointer-events-none absolute inset-0 h-full w-full object-contain"
             />
             <canvas ref={analysisCanvasRef} className="hidden" />
 
             {status !== "streaming" && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/70 text-center">
-                <Camera className="h-10 w-10 text-court-accent" />
+                <Upload className="h-10 w-10 text-court-accent" />
                 <div className="max-w-md px-6">
-                  <div className="font-display text-lg">Enable your camera</div>
-                  <p className="mt-1 text-sm text-white/60">
-                    Everything from here runs on your device — no data leaves the phone.
+                  <div className="font-brand text-2xl tracking-wide">
+                    Upload courtside footage
+                  </div>
+                  <p className="mt-1 text-sm text-court-muted">
+                    Use the orange Upload video button in the header, or click
+                    below. Clip loops locally — no basketball required.
                   </p>
+                  {cameraError ? (
+                    <p className="mt-2 text-xs text-court-rose">{cameraError}</p>
+                  ) : null}
                 </div>
-                <div className="flex gap-2">
-                  <button className="btn-primary" onClick={() => start()}>
-                    <Camera className="h-4 w-4" /> Start camera
+                <div className="flex flex-wrap justify-center gap-2">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <Upload className="h-4 w-4" /> Upload video
                   </button>
-                  <button className="btn-ghost" onClick={() => nav("/calibrate")}>
-                    Recalibrate
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => setPhase("setup")}
+                  >
+                    Back to setup
                   </button>
                 </div>
               </div>
@@ -490,17 +677,32 @@ export function Live() {
                 </button>
               )}
               {!running && elapsed > 0 && (
-                <button onClick={resumeGame} className="btn-primary">
-                  <Play className="h-4 w-4" /> Resume
-                </button>
+                <>
+                  <button onClick={onResumeGame} className="btn-primary">
+                    <Play className="h-4 w-4" /> Resume
+                  </button>
+                  <button onClick={onNewGame} className="btn-ghost">
+                    New game
+                  </button>
+                </>
               )}
               {elapsed > 0 && (
                 <button onClick={onEndGame} className="btn-ghost">
                   <Square className="h-4 w-4" /> End game
                 </button>
               )}
-              <button onClick={() => flip()} className="btn-ghost">
-                <RotateCw className="h-4 w-4" /> Flip
+              {source === "camera" ? (
+                <button type="button" onClick={() => flip()} className="btn-ghost">
+                  <RotateCw className="h-4 w-4" /> Flip
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload className="h-4 w-4" />
+                {fileName ? "Swap clip" : "Upload clip"}
               </button>
             </div>
 
@@ -526,12 +728,14 @@ export function Live() {
               <div className="text-xs font-semibold uppercase tracking-widest text-court-accent">
                 Live feed
               </div>
-              <div className="text-xs text-white/40">{events.length} events</div>
+              <div className="text-xs text-court-muted">{events.length} events</div>
             </div>
             <ul className="max-h-64 space-y-1.5 overflow-auto pr-1 text-sm">
               {events.length === 0 && (
-                <li className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-3 text-white/50">
-                  Nothing yet. Tap Tip off and let the AI take over.
+                <li className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-3 text-court-muted">
+                  Nothing yet. Tap Tip off — the arc heuristic auto-scores
+                  makes and calls out-of-bounds, with manual buttons as a
+                  backstop.
                 </li>
               )}
               {events
@@ -543,7 +747,7 @@ export function Live() {
                     key={e.id}
                     className="flex items-center gap-2 rounded-xl border border-white/5 bg-white/[0.03] px-3 py-2"
                   >
-                    <span className="font-mono text-[10px] text-white/40">
+                    <span className="font-mono text-[10px] text-court-muted">
                       {formatDuration(e.t)}
                     </span>
                     <EventBadge kind={e.kind} team={e.team} />
@@ -569,10 +773,11 @@ export function Live() {
               action={
                 courtCorners.length !== 4 ? (
                   <button
+                    type="button"
                     className="text-xs text-court-accent hover:underline"
-                    onClick={() => nav("/calibrate")}
+                    onClick={() => setPhase("setup")}
                   >
-                    Set now <ChevronRight className="ml-0.5 -mt-0.5 inline h-3 w-3" />
+                    Set now
                   </button>
                 ) : null
               }
@@ -583,17 +788,21 @@ export function Live() {
             <div className="mb-2 text-xs font-semibold uppercase tracking-widest text-court-accent">
               Judge cheat sheet
             </div>
-            <ul className="space-y-1.5 text-xs text-white/60">
+            <ul className="space-y-1.5 text-xs text-court-muted">
               <li>
-                • Pose model: MediaPipe Tasks Vision (GPU-delegated, quantized).
+                • Pose model: MediaPipe Tasks Vision (CDN on first visit; optional).
               </li>
               <li>
                 • Ball tracker: hue + motion segmentation with kinematic
-                fallback on occlusion.
+                fallback on occlusion — heuristics, not YOLO.
               </li>
               <li>
                 • Officiating: point-in-quad against your calibrated
-                perspective anchors.
+                image-space court corners.
+              </li>
+              <li>
+                • Auto-score is OFF by default. When ON, uses possession A/B +
+                rim-arc heuristic; manual +2/+3 always override.
               </li>
               <li>• TTS: Web Speech API — offline on most modern devices.</li>
             </ul>
@@ -625,7 +834,7 @@ function ScoreCard({
         <span className="h-2 w-2 rounded-full" style={{ background: color }} />
         Team {team}
       </div>
-      <div className="mt-0.5 font-display text-2xl font-semibold">{score}</div>
+      <div className="mt-0.5 font-brand text-3xl tracking-wide">{score}</div>
     </div>
   );
 }
@@ -650,7 +859,7 @@ function TogglePill({
       className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-widest transition ${
         on
           ? "border-court-accent/40 bg-court-accent/15 text-court-accent"
-          : "border-white/10 bg-white/[0.03] text-white/50"
+          : "border-white/10 bg-white/[0.03] text-court-muted"
       }`}
     >
       <Icon className="h-3 w-3" />
@@ -696,7 +905,7 @@ function MetricRow({
 }) {
   return (
     <div className="flex items-center justify-between py-1 text-sm">
-      <span className="text-white/60">{label}</span>
+      <span className="text-court-muted">{label}</span>
       <span className="flex items-center gap-2 font-mono">
         {value}
         {suffix}
@@ -722,7 +931,7 @@ function EventBadge({
     steal: { c: "bg-white/10 text-white", label: "STEAL" },
     streak: { c: "bg-court-accent2/20 text-court-accent2", label: "STREAK" },
     highlight: { c: "bg-white/10 text-white", label: "HL" },
-    commentary: { c: "bg-white/10 text-white/60", label: "SAY" },
+    commentary: { c: "bg-white/10 text-court-muted", label: "SAY" },
   };
   const m = map[kind] ?? map.commentary;
   return (
@@ -797,7 +1006,7 @@ function drawOverlay(
   if (pose?.landmarks?.length) {
     for (let p = 0; p < pose.landmarks.length; p++) {
       const lms = pose.landmarks[p];
-      const stroke = p === 0 ? "#22d3ee" : "#a3e635";
+      const stroke = p === 0 ? "#22d3ee" : "#ff5b1f";
       ctx.strokeStyle = stroke;
       ctx.fillStyle = stroke;
       ctx.lineWidth = 2.5;

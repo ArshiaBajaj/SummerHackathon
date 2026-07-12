@@ -13,8 +13,8 @@ export const tailwindPreset = {
     extend: {
       colors: {
         slate: palette.slate,
-        emerald: palette.emerald,
-        indigo: palette.indigo,
+        orange: palette.orange,
+        cyan: palette.cyan,
         amber: palette.amber,
         rose: palette.rose,
         court: {
@@ -57,12 +57,12 @@ export const tailwindPreset = {
         md: shadowsToCss(shadows.md),
         lg: shadowsToCss(shadows.lg),
         xl: shadowsToCss(shadows.xl),
-        emerald: shadowsToCss(shadows.emeraldGlow),
-        indigo: shadowsToCss(shadows.indigoGlow),
+        primary: shadowsToCss(shadows.primaryGlow),
+        secondary: shadowsToCss(shadows.secondaryGlow),
       },
       backgroundImage: {
         "court-hero":
-          "radial-gradient(60% 45% at 15% 5%, rgba(16,185,129,0.14) 0%, rgba(15,23,42,0) 60%), radial-gradient(50% 40% at 92% 90%, rgba(99,102,241,0.14) 0%, rgba(15,23,42,0) 60%)",
+          "radial-gradient(60% 45% at 15% 5%, rgba(255,91,31,0.14) 0%, rgba(15,23,42,0) 60%), radial-gradient(50% 40% at 92% 90%, rgba(34,211,238,0.14) 0%, rgba(15,23,42,0) 60%)",
         "grid-diffuse":
           "linear-gradient(rgba(148,163,184,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.04) 1px, transparent 1px)",
       },

@@ -10,9 +10,23 @@ import {
   llmEnabled,
   type CommentaryRequest,
 } from "./services/ai.js";
+import {
+  answerFilmQuestion,
+  generateChapters,
+  generateCoachLine,
+  generateMoment,
+  generateQuiz,
+  generateRecap,
+  type CoachMode,
+  type FilmContext,
+} from "./services/filmCoach.js";
 import type { ScoutCard } from "./types.js";
+import { hooperiqApi } from "./routes.hooperiq.js";
 
 export const api = Router();
+
+// Independent HooperIQ feature (assess / health) — isolated router
+api.use("/hooperiq", hooperiqApi);
 
 api.get("/health", (_req: Request, res: Response) => {
   res.json({
@@ -84,6 +98,91 @@ api.post("/ai/scouting-report", async (req, res) => {
   }
   const result = await generateScoutingReport(card);
   res.json(result);
+});
+
+// --- Film Room AI coach (line / ask / moment / quiz / chapters / recap) ---
+
+function asFilmContext(body: Record<string, unknown>): FilmContext | null {
+  const id = String(body.id ?? "");
+  const title = String(body.title ?? "");
+  if (!id || !title) return null;
+  const teamA = body.teamA as FilmContext["teamA"] | undefined;
+  const teamB = body.teamB as FilmContext["teamB"] | undefined;
+  if (!teamA?.tricode || !teamB?.tricode) return null;
+  const mode = (["rookie", "scout", "hype"].includes(String(body.mode))
+    ? String(body.mode)
+    : "scout") as CoachMode;
+  return {
+    id,
+    title,
+    subtitle: String(body.subtitle ?? ""),
+    headline: String(body.headline ?? ""),
+    starLine: String(body.starLine ?? ""),
+    tags: Array.isArray(body.tags) ? body.tags.map(String) : [],
+    teamA,
+    teamB,
+    boxLeaders: Array.isArray(body.boxLeaders)
+      ? (body.boxLeaders as FilmContext["boxLeaders"])
+      : [],
+    scoreA: typeof body.scoreA === "number" ? body.scoreA : undefined,
+    scoreB: typeof body.scoreB === "number" ? body.scoreB : undefined,
+    quarter: typeof body.quarter === "number" ? body.quarter : undefined,
+    clock: typeof body.clock === "string" ? body.clock : undefined,
+    lastEvent: typeof body.lastEvent === "string" ? body.lastEvent : undefined,
+    mode,
+  };
+}
+
+api.post("/ai/film", async (req, res) => {
+  try {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const action = String(body.action ?? "");
+    const film = asFilmContext(body);
+    if (!film) return res.status(400).json({ error: "film_context_required" });
+
+    if (action === "line") {
+      const result = await generateCoachLine(film);
+      return res.json(result);
+    }
+    if (action === "ask") {
+      const question = String(body.question ?? "");
+      const result = await answerFilmQuestion(film, question);
+      return res.json(result);
+    }
+    if (action === "moment") {
+      const result = await generateMoment(film);
+      return res.json(result);
+    }
+    if (action === "quiz") {
+      const result = await generateQuiz(film);
+      return res.json(result);
+    }
+    if (action === "chapters") {
+      const timeline = Array.isArray(body.timeline) ? body.timeline : [];
+      const result = await generateChapters(
+        film,
+        timeline as {
+          t: number;
+          quarter: number;
+          text: string;
+          scoreA: number;
+          scoreB: number;
+        }[],
+      );
+      return res.json(result);
+    }
+    if (action === "recap") {
+      const result = await generateRecap(film);
+      return res.json(result);
+    }
+    return res.status(400).json({
+      error: "invalid_action",
+      hint: "line | ask | moment | quiz | chapters | recap",
+    });
+  } catch (err) {
+    console.error("[film-ai]", err);
+    res.status(500).json({ error: "film_ai_failed" });
+  }
 });
 
 // --- Scout-card persistence + sharing -------------------------------------

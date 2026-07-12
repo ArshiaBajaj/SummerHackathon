@@ -20,14 +20,12 @@ let scoreSound: Audio.Sound | null = null;
 let crowdSound: Audio.Sound | null = null;
 let ready = false;
 
-// Placeholder sources — replace these paths with real assets once you drop
-// the sound files into `assets/audio/`. The referenced files must exist
-// before the first `warmupAudio()` call; until then, the corresponding
-// playback methods no-op gracefully.
+// Bundled synthesized cues (see `assets/audio/gen_audio.py`) — swap these
+// require()s for real recordings any time without touching call sites.
 const SOURCES: Record<"whistle" | "score" | "crowd", AVPlaybackSource | null> = {
-  whistle: null,
-  score: null,
-  crowd: null,
+  whistle: require("../../assets/audio/whistle.wav") as AVPlaybackSource,
+  score: require("../../assets/audio/score.wav") as AVPlaybackSource,
+  crowd: require("../../assets/audio/crowd.wav") as AVPlaybackSource,
 };
 
 /**

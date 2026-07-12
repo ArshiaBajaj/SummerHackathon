@@ -2,7 +2,7 @@
   "name": "@courtvision/tokens",
   "version": "0.1.0",
   "private": true,
-  "description": "Design tokens shared between the web PWA and the React Native app: slate palette + emerald/indigo accents, typography scale, spacing, shadows, motion.",
+  "description": "Design tokens shared between the web PWA and the React Native app: slate palette + orange/cyan accents, typography scale, spacing, shadows, motion.",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "sideEffects": false,

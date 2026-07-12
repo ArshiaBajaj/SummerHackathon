@@ -100,6 +100,15 @@ type LiveActions = {
   updateJump: (playerId: string, cm: number) => void;
   updateRelease: (playerId: string, mps: number) => void;
   loadDemoData: () => void;
+  /** Hydrate store from a processed backend game (Recruit → scout card). */
+  hydrateFromPipeline: (input: {
+    scoreA: number;
+    scoreB: number;
+    durationMs: number;
+    players: PlayerProfile[];
+    events: GameEvent[];
+    heat: HeatCell[];
+  }) => void;
 };
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -278,6 +287,47 @@ export const useGame = create<LiveState & LiveActions>((set, get) => ({
           : p,
       ),
     })),
+
+  hydrateFromPipeline: (input) => {
+    const snap: GameSnapshot = {
+      sport: "basketball",
+      createdAt: Date.now(),
+      duration: input.durationMs,
+      scoreA: input.scoreA,
+      scoreB: input.scoreB,
+      events: input.events,
+      players: input.players,
+      heat: input.heat,
+      highlights: input.events
+        .filter((e) => e.kind === "score" || e.kind === "jump" || e.kind === "highlight")
+        .slice(-12)
+        .map((e) => ({
+          id: e.id,
+          t: e.t,
+          label:
+            e.kind === "score"
+              ? `${e.value ?? 2}-pointer by Team ${e.team}`
+              : e.kind === "jump"
+                ? `${(e.value ?? 0).toFixed(0)}cm vertical`
+                : (e.text ?? "Highlight"),
+          team: e.team,
+          value: e.value,
+        })),
+    };
+    set({
+      running: false,
+      startedAt: null,
+      elapsed: input.durationMs,
+      scoreA: input.scoreA,
+      scoreB: input.scoreB,
+      events: input.events,
+      players: input.players,
+      heat: input.heat,
+      streakTeam: null,
+      streakCount: 0,
+      lastResult: snap,
+    });
+  },
 
   loadDemoData: () => {
     const now = Date.now();

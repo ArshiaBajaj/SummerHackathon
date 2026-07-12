@@ -65,7 +65,7 @@ apps/mobile/
 │       └─ SpatialEngineModule.kt             # JNI bridge stub
 │
 └─ assets/
-    ├─ audio/     # (add whistle.wav, score.wav, crowd.wav here)
+    ├─ audio/     # whistle.wav, score.wav, crowd.wav (synth placeholders — see gen_audio.py)
     ├─ fonts/     # (Inter + Geist family)
     ├─ images/    # icon.png, splash.png, adaptive-icon.png
     └─ models/    # (drop pose_landmarker_lite.tflite / .mlmodelc here)

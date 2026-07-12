@@ -1,7 +1,8 @@
 /**
  * Elevation tokens — soft, diffused shadows tuned for dark surfaces. Uses two
  * layers (ambient + key) at low alpha; the accent glow variants light the
- * emerald / indigo accents softly so they feel embedded rather than pasted on.
+ * primary orange / secondary cyan accents softly so they feel embedded
+ * rather than pasted on.
  */
 
 type ShadowSpec = {
@@ -30,11 +31,11 @@ export const shadows = {
     { offsetY: 24, blur: 48, spread: -12, color: "#000000", opacity: 0.45 },
     { offsetY: 12, blur: 24, spread: -6, color: "#000000", opacity: 0.28 },
   ],
-  emeraldGlow: [
-    { offsetY: 0, blur: 32, spread: -8, color: "#10b981", opacity: 0.4 },
+  primaryGlow: [
+    { offsetY: 0, blur: 32, spread: -8, color: "#ff5b1f", opacity: 0.4 },
   ],
-  indigoGlow: [
-    { offsetY: 0, blur: 32, spread: -8, color: "#6366f1", opacity: 0.4 },
+  secondaryGlow: [
+    { offsetY: 0, blur: 32, spread: -8, color: "#22d3ee", opacity: 0.4 },
   ],
 } as const;
 

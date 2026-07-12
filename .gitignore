@@ -9,3 +9,15 @@ backend/data/
 .env
 dist/
 .next/
+
+# Local secrets (Supabase etc.)
+.env.local
+**/.env.local
+
+# Supabase / local secrets
+.env.local
+apps/web/.env.local
+hooperiq/.env
+hooperiq/supabase/.temp-db-password
+hooperiq/.supabase-create-out.txt
+hooperiq/.create-supabase-tmp.sh

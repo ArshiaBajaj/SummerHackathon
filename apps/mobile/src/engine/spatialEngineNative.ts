@@ -54,6 +54,10 @@ type NativeSpatialEngine = {
 const native: NativeSpatialEngine | null =
   (NativeModules as Record<string, NativeSpatialEngine | undefined>).SpatialEngine ?? null;
 
+/** True when the native C++ TurboModule is linked; false when running the
+ *  pure-TS fallback (dev client without native pods, simulator, web). */
+export const isNativeSpatialEngine = !!native;
+
 export class SpatialEngine {
   private state: EngineState = initialEngineState();
   private homography: Homography | null = null;

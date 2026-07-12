@@ -13,10 +13,14 @@
     "web:dev": "npm run dev --workspace apps/web",
     "web:build": "npm run build --workspace apps/web",
     "web:preview": "npm run preview --workspace apps/web",
-    "server:dev": "npm run dev --workspace apps/server",
-    "server:start": "npm run start --workspace apps/server",
+    "supabase:create": "bash hooperiq/create-supabase.sh",
+    "supabase:push": "bash -lc 'cd hooperiq && supabase db push --include-all'",
+    "backend:start": "bash backend/run.sh",
+    "dev:all": "npm run backend:start & npm run dev",
+    "server:start": "npm run backend:start",
+    "server:dev": "npm run backend:start",
     "server:build": "npm run build --workspace apps/server",
-    "dev:all": "npm run server:start & npm run dev",
+    "server:legacy": "npm run start --workspace apps/server",
     "mobile:start": "npm run start --workspace apps/mobile",
     "mobile:ios": "npm run ios --workspace apps/mobile",
     "mobile:android": "npm run android --workspace apps/mobile",
@@ -31,6 +35,8 @@
     "@courtvision/web": {
       "react": "18.2.0",
       "react-dom": "18.2.0"
-    }
+    },
+    "react": "18.2.0",
+    "react-dom": "18.2.0"
   }
 }

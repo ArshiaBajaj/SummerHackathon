@@ -202,7 +202,7 @@ Union of the contract shape and the frontend-client shape:
 {
   "ok": true,
   "status": "ok",
-  "service": "courtvision-server",
+  "service": "anact-ortho-server",
   "version": "0.1.0",
   "llm": "enabled | offline-fallback",
   "counts": {"players": 24, "teams": 19, "films": 5},
@@ -233,6 +233,7 @@ flat strings, e.g. `404 {"error": "film_not_found"}` — not the nested shape be
 | GET `/api/films/{id}` | `{"film": FilmGameDetail}` incl. deterministic replay `timeline` / `404 {"error":"film_not_found"}` |
 | POST `/api/commentary` | `{"text", "source": "llm"\|"engine"}`; body `{event, team?, teamName?, value?, scoreA?, scoreB?, style?}`; `400 {"error":"event_required"}` |
 | POST `/api/ai/scouting-report` | `{"text", "source"}`; body = ScoutCard; `400 {"error":"player_required"}` |
+| POST `/api/ai/film` | Film coach: body `{action, id, title, teamA, teamB, ...}` where `action` is `line` \| `ask` \| `moment` \| `quiz` \| `chapters` \| `recap`. Returns coach text / moment / quiz / chapters / recap with `source`. Offline deterministic engine when no OpenAI key. |
 | POST `/api/scout/profiles` | `201 {"card": {...saved card, id, createdAt}}` — auto-generates `report` if missing; `400 {"error":"invalid_card"}` |
 | GET `/api/scout/profiles` | `{"count", "cards": [...]}` (newest first, persisted in SQLite) |
 | GET `/api/scout/profiles/{id}` | `{"card"}` / `404 {"error":"card_not_found"}` |

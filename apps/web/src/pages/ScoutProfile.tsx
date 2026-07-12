@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Share2,
@@ -17,14 +17,146 @@ import {
   FileText,
   Loader2,
   UploadCloud,
+  AlertCircle,
 } from "lucide-react";
 import { useGame } from "@/state/gameStore";
-import type { GameEvent, PlayerProfile } from "@/state/gameStore";
+import type { GameEvent } from "@/state/gameStore";
 import { api } from "@/lib/api";
 
+/** Minimal shape every helper below needs — satisfied by both a live-session
+ *  `PlayerProfile` and a card fetched from the backend by id. */
+type ScoutSubject = {
+  id: string;
+  name: string;
+  team: "A" | "B";
+  color: string;
+  points: number;
+  shots: number;
+  makes: number;
+  jumps: number;
+  bestJumpCm: number;
+  topReleaseMps: number;
+  distanceM: number;
+};
+
+type PublishedCard = {
+  id: string;
+  createdAt: number;
+  player: {
+    name: string;
+    team: "A" | "B";
+    position?: string;
+    points: number;
+    shots: number;
+    makes: number;
+    jumps: number;
+    bestJumpCm: number;
+    topReleaseMps: number;
+    distanceM: number;
+  };
+  sport: string;
+  duration: number;
+  events: GameEvent[];
+  report?: string;
+  reportSource?: "llm" | "engine";
+};
+
 export function ScoutProfile() {
+  const [searchParams] = useSearchParams();
+  const viewId = searchParams.get("id");
+
   const { lastResult, players, events, scoreA, scoreB, elapsed, loadDemoData } =
     useGame();
+
+  const [fetchedCard, setFetchedCard] = useState<PublishedCard | null>(null);
+  const [fetchStatus, setFetchStatus] = useState<"idle" | "loading" | "error">(
+    viewId ? "loading" : "idle",
+  );
+
+  useEffect(() => {
+    if (!viewId) {
+      setFetchedCard(null);
+      setFetchStatus("idle");
+      return;
+    }
+    let cancelled = false;
+    setFetchStatus("loading");
+    api
+      .getScout(viewId)
+      .then((r) => {
+        if (cancelled) return;
+        setFetchedCard(r.card as PublishedCard);
+        setFetchStatus("idle");
+      })
+      .catch(() => {
+        if (!cancelled) setFetchStatus("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [viewId]);
+
+  // ---- Viewing a published card by id -----------------------------------
+  if (viewId) {
+    if (fetchStatus === "loading") {
+      return (
+        <div className="mx-auto max-w-2xl">
+          <div className="panel flex flex-col items-center gap-3 p-10 text-center">
+            <Loader2 className="h-6 w-6 animate-spin text-court-accent" />
+            <p className="text-sm text-court-muted">Loading scout card…</p>
+          </div>
+        </div>
+      );
+    }
+    if (fetchStatus === "error" || !fetchedCard) {
+      return (
+        <div className="mx-auto max-w-2xl">
+          <div className="panel p-8 text-center">
+            <AlertCircle className="mx-auto h-10 w-10 text-court-rose" />
+            <h1 className="mt-4 font-brand text-2xl">Card unavailable</h1>
+            <p className="mt-2 text-court-muted">
+              Couldn't load this scout card. If the backend isn't running,
+              start it from the repo root with{" "}
+              <code className="rounded bg-white/10 px-1.5 py-0.5 text-xs">
+                backend/run.sh
+              </code>
+              , then reload.
+            </p>
+            <div className="mt-6 flex justify-center gap-2">
+              <Link to="/" className="btn-primary">
+                Back home
+              </Link>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    const you: ScoutSubject = {
+      id: fetchedCard.id,
+      name: fetchedCard.player.name,
+      team: fetchedCard.player.team,
+      color: fetchedCard.player.team === "A" ? "#ff5b1f" : "#22d3ee",
+      points: fetchedCard.player.points,
+      shots: fetchedCard.player.shots,
+      makes: fetchedCard.player.makes,
+      jumps: fetchedCard.player.jumps,
+      bestJumpCm: fetchedCard.player.bestJumpCm,
+      topReleaseMps: fetchedCard.player.topReleaseMps,
+      distanceM: fetchedCard.player.distanceM,
+    };
+    return (
+      <ScoutCardBody
+        you={you}
+        dataEvents={fetchedCard.events}
+        duration={fetchedCard.duration}
+        report={fetchedCard.report ?? null}
+        reportSource={fetchedCard.reportSource ?? "engine"}
+        readOnly
+      />
+    );
+  }
+
+  // ---- Local live-session card ------------------------------------------
   const dataPlayers = lastResult?.players ?? players;
   const dataEvents = lastResult?.events ?? events;
   const totalPoints = (lastResult?.scoreA ?? scoreA) + (lastResult?.scoreB ?? scoreB);
@@ -77,7 +209,7 @@ export function ScoutProfile() {
       setReport(r.text);
       setReportSource(r.source);
     } catch {
-      setErr("Backend offline — run `npm run server:start` to generate a report.");
+      setErr("Backend offline — run `backend/run.sh` to generate a report.");
     } finally {
       setBusy(null);
     }
@@ -98,7 +230,7 @@ export function ScoutProfile() {
       }
       void navigator.clipboard.writeText(url).catch(() => undefined);
     } catch {
-      setErr("Backend offline — run `npm run server:start` to publish a shareable card.");
+      setErr("Backend offline — run `backend/run.sh` to publish a shareable card.");
     } finally {
       setBusy(null);
     }
@@ -109,19 +241,22 @@ export function ScoutProfile() {
       <div className="mx-auto max-w-2xl">
         <div className="panel p-8 text-center">
           <Share2 className="mx-auto h-10 w-10 text-court-accent" />
-          <h1 className="mt-4 font-display text-2xl">
+          <h1 className="mt-4 font-brand text-2xl">
             Your scout card is unwritten
           </h1>
-          <p className="mt-2 text-white/60">
+          <p className="mt-2 text-court-muted">
             Every scout card is minted from a live session. Play a game with
             Anact Ortho and we'll auto-generate a verifiable, shareable page —
             the digital equivalent of an IMG showcase reel.
           </p>
-          <div className="mt-6 flex justify-center gap-2">
-            <Link to="/calibrate" className="btn-primary">
-              <Camera className="h-4 w-4" /> Start a session
+          <div className="mt-6 flex flex-wrap justify-center gap-2">
+            <Link to="/live" className="btn-primary">
+              <Camera className="h-4 w-4" /> Open Live
             </Link>
-            <button className="btn-ghost" onClick={loadDemoData}>
+            <Link to="/recruit" className="btn-ghost">
+              <UploadCloud className="h-4 w-4" /> Recruit pipeline
+            </Link>
+            <button type="button" className="btn-ghost" onClick={loadDemoData}>
               <Sparkles className="h-4 w-4" />
               Preview a sample card
             </button>
@@ -138,10 +273,10 @@ export function ScoutProfile() {
           <div className="mb-1 text-xs font-semibold uppercase tracking-[0.24em] text-court-accent">
             Verified scout card
           </div>
-          <h1 className="font-display text-3xl md:text-4xl">
+          <h1 className="page-title">
             {you.name}'s Anact Ortho profile
           </h1>
-          <p className="mt-1 max-w-2xl text-white/60">
+          <p className="mt-1 max-w-2xl text-white/70">
             Auto-generated from on-device inference. Every metric below was
             captured locally, no cloud data required. Share the link with any
             recruiter or coach.
@@ -164,7 +299,7 @@ export function ScoutProfile() {
             )}
             AI scouting report
           </button>
-          <button className="btn-ghost" onClick={() => shareLink(you)}>
+          <button className="btn-ghost" onClick={() => shareCard(you, publishUrl)}>
             <Share2 className="h-4 w-4" /> Share
           </button>
           <button className="btn-ghost" onClick={() => downloadCard(you, dataEvents, duration)}>
@@ -197,7 +332,7 @@ export function ScoutProfile() {
         >
           <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-court-accent">
             <FileText className="h-3.5 w-3.5" /> Scouting report
-            <span className="ml-2 rounded-full border border-white/10 px-2 py-0.5 text-[10px] normal-case tracking-normal text-white/50">
+            <span className="ml-2 rounded-full border border-white/10 px-2 py-0.5 text-[10px] normal-case tracking-normal text-court-muted">
               {reportSource === "llm" ? "LLM-generated" : "on-device engine"}
             </span>
           </div>
@@ -205,26 +340,80 @@ export function ScoutProfile() {
         </motion.section>
       )}
 
+      <ScoutCardBody
+        you={you}
+        dataEvents={dataEvents}
+        duration={duration}
+        qrText={publishUrl ?? undefined}
+      />
+    </div>
+  );
+}
+
+function ScoutCardBody({
+  you,
+  dataEvents,
+  duration,
+  report,
+  reportSource,
+  qrText,
+  readOnly,
+}: {
+  you: ScoutSubject;
+  dataEvents: GameEvent[];
+  duration: number;
+  report?: string | null;
+  reportSource?: string;
+  qrText?: string;
+  readOnly?: boolean;
+}) {
+  const shareUrl = qrText ?? (typeof window !== "undefined" ? window.location.href : "");
+
+  return (
+    <div className={readOnly ? "mx-auto max-w-4xl space-y-6" : "space-y-6"}>
+      {readOnly && (
+        <header>
+          <div className="mb-1 text-xs font-semibold uppercase tracking-[0.24em] text-court-accent">
+            Verified scout card
+          </div>
+          <h1 className="font-brand text-3xl md:text-4xl">
+            {you.name}'s Anact Ortho profile
+          </h1>
+        </header>
+      )}
+
+      {readOnly && report && (
+        <section className="panel p-6">
+          <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-court-accent">
+            <FileText className="h-3.5 w-3.5" /> Scouting report
+            <span className="ml-2 rounded-full border border-white/10 px-2 py-0.5 text-[10px] normal-case tracking-normal text-court-muted">
+              {reportSource === "llm" ? "LLM-generated" : "on-device engine"}
+            </span>
+          </div>
+          <p className="text-sm leading-relaxed text-white/80">{report}</p>
+        </section>
+      )}
+
       <motion.section
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-court-panel via-black to-court-panel p-8 shadow-glow"
+        className="relative overflow-hidden rounded-[22px] border border-white/[0.08] bg-gradient-to-br from-black via-[#0a0a0a] to-black p-8 shadow-glow"
       >
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(50%_45%_at_15%_10%,rgba(255,91,31,0.25),transparent),radial-gradient(45%_35%_at_90%_100%,rgba(34,211,238,0.22),transparent)]" />
         <div className="relative grid gap-8 md:grid-cols-[1.4fr_1fr]">
           <div>
             <div className="flex items-center gap-3">
               <div
-                className="flex h-14 w-14 items-center justify-center rounded-2xl font-display text-2xl font-bold text-black"
+                className="flex h-14 w-14 items-center justify-center rounded-2xl font-brand text-2xl font-bold text-black"
                 style={{ background: you.color }}
               >
                 {initials(you.name)}
               </div>
               <div>
-                <div className="text-xs uppercase tracking-widest text-white/50">
+                <div className="text-xs uppercase tracking-widest text-court-muted">
                   Team {you.team} · Guard
                 </div>
-                <div className="font-display text-2xl">{you.name}</div>
+                <div className="font-brand text-2xl">{you.name}</div>
               </div>
               <div className="ml-auto chip">
                 <ShieldCheck className="h-3 w-3 text-court-lime" />
@@ -248,13 +437,17 @@ export function ScoutProfile() {
           </div>
 
           <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-white/10 bg-black/30 p-6 text-center">
-            <QrPreview text={`${window.location.origin}/profile#${you.id}`} />
-            <div className="text-xs uppercase tracking-widest text-white/50">
+            <QrPreview text={shareUrl} />
+            <div className="text-xs uppercase tracking-widest text-court-muted">
               Recruiter QR
             </div>
+            <p className="max-w-[14rem] text-[10px] leading-relaxed text-court-muted">
+              QR image loads from api.qrserver.com — needs network. Copy the link
+              if you&apos;re offline.
+            </p>
             <button
               className="btn-ghost text-xs"
-              onClick={() => navigator.clipboard.writeText(`${window.location.origin}/profile#${you.id}`)}
+              onClick={() => navigator.clipboard.writeText(shareUrl)}
             >
               <Copy className="h-3.5 w-3.5" /> Copy link
             </button>
@@ -277,23 +470,33 @@ export function ScoutProfile() {
         </div>
       </section>
 
-      <section className="panel relative overflow-hidden p-6 md:p-8">
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-court-accent/10 to-court-neon/10" />
-        <div className="relative flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="font-display text-xl md:text-2xl">
-              Ready to be scouted?
+      {!readOnly && (
+        <section className="panel relative overflow-hidden p-6 md:p-8">
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-court-accent/10 to-court-neon/10" />
+          <div className="relative flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <div className="font-brand text-xl md:text-2xl">
+                Ready to be scouted?
+              </div>
+              <p className="mt-1 text-sm text-court-muted">
+                Share this link with any coach, recruiter, or league scout — no
+                subscription required.
+              </p>
             </div>
-            <p className="mt-1 text-sm text-white/60">
-              Share this link with any coach, recruiter, or league scout — no
-              subscription required.
-            </p>
+            <Link to="/analytics" className="btn-primary">
+              View full analytics <ArrowRight className="h-4 w-4" />
+            </Link>
           </div>
-          <Link to="/analytics" className="btn-primary">
-            View full analytics <ArrowRight className="h-4 w-4" />
+        </section>
+      )}
+
+      {readOnly && (
+        <div className="flex justify-center">
+          <Link to="/" className="btn-ghost">
+            Build your own scout card <ArrowRight className="h-4 w-4" />
           </Link>
         </div>
-      </section>
+      )}
     </div>
   );
 }
@@ -330,11 +533,11 @@ function BigStat({
 }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-      <div className="flex items-center justify-between text-white/40">
+      <div className="flex items-center justify-between text-court-muted">
         <span className="text-[10px] uppercase tracking-widest">{label}</span>
         <Icon className="h-3.5 w-3.5" />
       </div>
-      <div className="mt-1 font-display text-2xl md:text-3xl">{value}</div>
+      <div className="mt-1 font-brand text-2xl md:text-3xl">{value}</div>
     </div>
   );
 }
@@ -342,53 +545,17 @@ function BigStat({
 function MiniRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2 text-sm">
-      <span className="text-white/60">{label}</span>
+      <span className="text-court-muted">{label}</span>
       <span className="font-mono">{value}</span>
     </div>
   );
 }
 
 function QrPreview({ text }: { text: string }) {
-  // Deterministic pseudo-QR for demo purposes — a real deployment would generate
-  // a proper QR at share time.
-  const size = 21;
-  const cells = useMemo(() => {
-    const out: boolean[][] = [];
-    let seed = 0;
-    for (const c of text) seed = (seed * 31 + c.charCodeAt(0)) >>> 0;
-    for (let y = 0; y < size; y++) {
-      const row: boolean[] = [];
-      for (let x = 0; x < size; x++) {
-        seed = (seed * 1103515245 + 12345) >>> 0;
-        row.push(((seed >> 8) & 1) === 1);
-      }
-      out.push(row);
-    }
-    // Add QR-style locator squares
-    const stamp = (px: number, py: number) => {
-      for (let y = 0; y < 7; y++) {
-        for (let x = 0; x < 7; x++) {
-          const border = x === 0 || y === 0 || x === 6 || y === 6;
-          const center = x >= 2 && x <= 4 && y >= 2 && y <= 4;
-          out[py + y][px + x] = border || center;
-        }
-      }
-    };
-    stamp(0, 0);
-    stamp(size - 7, 0);
-    stamp(0, size - 7);
-    return out;
-  }, [text]);
-
+  const src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(text)}`;
   return (
     <div className="rounded-xl bg-white p-3">
-      <svg viewBox={`0 0 ${size} ${size}`} className="h-32 w-32">
-        {cells.map((row, y) =>
-          row.map((on, x) =>
-            on ? <rect key={`${x}-${y}`} x={x} y={y} width="1" height="1" fill="#050914" /> : null,
-          ),
-        )}
-      </svg>
+      <img src={src} alt="QR" className="h-36 w-36" />
       <div className="mt-1 flex items-center justify-center gap-1 text-[10px] font-semibold uppercase tracking-widest text-black/50">
         <QrCode className="h-3 w-3" /> Scan me
       </div>
@@ -402,7 +569,7 @@ function SignatureReel({ events }: { events: GameEvent[] }) {
     .sort((a, b) => (b.value ?? 0) - (a.value ?? 0))
     .slice(0, 5);
   if (clips.length === 0)
-    return <div className="text-sm text-white/50">No reels yet.</div>;
+    return <div className="text-sm text-court-muted">No reels yet.</div>;
   return (
     <ul className="space-y-2">
       {clips.map((c, i) => (
@@ -419,7 +586,7 @@ function SignatureReel({ events }: { events: GameEvent[] }) {
                 ? `${(c.value ?? 0).toFixed(0)}cm vertical burst`
                 : `${c.value}-point make`}
             </div>
-            <div className="text-[11px] text-white/50">
+            <div className="text-[11px] text-court-muted">
               {formatDuration(c.t)} · Team {c.team ?? "A"}
             </div>
           </div>
@@ -432,7 +599,7 @@ function SignatureReel({ events }: { events: GameEvent[] }) {
   );
 }
 
-function Traits({ you }: { you: PlayerProfile }) {
+function Traits({ you }: { you: ScoutSubject }) {
   const traits = [
     { label: "Explosiveness", value: Math.min(100, (you.bestJumpCm / 80) * 100) },
     { label: "Release speed", value: Math.min(100, (you.topReleaseMps / 12) * 100) },
@@ -445,7 +612,7 @@ function Traits({ you }: { you: PlayerProfile }) {
       {traits.map((t) => (
         <div key={t.label}>
           <div className="mb-1 flex items-center justify-between text-xs">
-            <span className="text-white/60">{t.label}</span>
+            <span className="text-court-muted">{t.label}</span>
             <span className="font-mono text-white/70">{Math.round(t.value)}</span>
           </div>
           <div className="h-2 overflow-hidden rounded-full bg-white/5">
@@ -462,8 +629,8 @@ function Traits({ you }: { you: PlayerProfile }) {
   );
 }
 
-function shareLink(you: PlayerProfile): void {
-  const url = `${window.location.origin}/profile#${you.id}`;
+function shareCard(you: ScoutSubject, publishUrl: string | null): void {
+  const url = publishUrl ?? window.location.href;
   const text = `Peep my Anact Ortho scout card — ${you.points} pts, ${you.bestJumpCm.toFixed(0)}cm vertical.`;
   if (typeof navigator.share === "function") {
     void navigator.share({ title: "Anact Ortho Scout Card", text, url }).catch(() => undefined);
@@ -473,7 +640,7 @@ function shareLink(you: PlayerProfile): void {
 }
 
 function downloadCard(
-  you: PlayerProfile,
+  you: ScoutSubject,
   events: GameEvent[],
   duration: number,
 ): void {

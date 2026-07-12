@@ -3,6 +3,13 @@
 set -e
 cd "$(dirname "$0")"
 
+if [ -f .env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
+
 if [ ! -d .venv ]; then
     echo "Setting up venv (first run)..."
     if command -v uv >/dev/null 2>&1; then
@@ -14,4 +21,4 @@ if [ ! -d .venv ]; then
     fi
 fi
 
-exec .venv/bin/python -m uvicorn app.main:app --port 8787
+exec .venv/bin/python -m uvicorn app.main:app --reload --port "${PORT:-8787}"

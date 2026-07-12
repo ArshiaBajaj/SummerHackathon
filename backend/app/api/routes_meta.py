@@ -23,7 +23,7 @@ def health() -> dict:
     return {
         "ok": True,
         "status": "ok",
-        "service": "courtvision-server",
+        "service": "anact-ortho-server",
         "version": config.VERSION,
         "llm": "enabled" if llm_enabled() else "offline-fallback",
         "counts": {

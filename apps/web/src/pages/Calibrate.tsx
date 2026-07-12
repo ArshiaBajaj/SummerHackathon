@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Camera,
@@ -11,9 +10,9 @@ import {
   Crosshair,
   Undo2,
   Check,
-  ShieldAlert,
+  Upload,
 } from "lucide-react";
-import { useCamera } from "@/lib/useCamera";
+import { useCamera, type CameraStatus, type VideoSource } from "@/lib/useCamera";
 import { useGame } from "@/state/gameStore";
 import type { CourtCorner } from "@/state/gameStore";
 
@@ -24,24 +23,69 @@ const CORNER_LABELS = [
   "Bottom-left sideline",
 ];
 
-export function Calibrate() {
-  const nav = useNavigate();
+export const SMART_COURT_CORNERS: CourtCorner[] = [
+  { x: 0.14, y: 0.24 },
+  { x: 0.86, y: 0.24 },
+  { x: 0.94, y: 0.9 },
+  { x: 0.06, y: 0.9 },
+];
+
+export type CourtSetupVideo = {
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  status: CameraStatus;
+  error: string | null;
+  source: VideoSource | null;
+  fileName: string | null;
+  start: () => void | Promise<void>;
+  stop: () => void;
+  flip: () => void | Promise<void>;
+  loadFile: (file: File) => void | Promise<void>;
+};
+
+/** Court camera setup — used inside Live as step 1 of the unified session. */
+export function CourtSetup({
+  onReady,
+  video,
+}: {
+  onReady: () => void;
+  /** Shared video source from Live — required so upload survives into the session. */
+  video?: CourtSetupVideo;
+}) {
   const setCorners = useGame((s) => s.setCourtCorners);
   const savedCorners = useGame((s) => s.courtCorners);
-  const sport = useGame((s) => s.sport);
-  const setSport = useGame((s) => s.setSport);
   const commentaryStyle = useGame((s) => s.commentaryStyle);
   const setCommentaryStyle = useGame((s) => s.setCommentaryStyle);
 
-  const { videoRef, status, error, start, stop, flip } = useCamera();
-  const stageRef = useRef<HTMLDivElement | null>(null);
-  const [corners, setLocalCorners] = useState<CourtCorner[]>(savedCorners);
+  const local = useCamera();
+  const cam = video ?? local;
+  const {
+    videoRef,
+    status,
+    error,
+    source,
+    fileName,
+    start,
+    stop,
+    flip,
+    loadFile,
+  } = cam;
 
-  useEffect(() => setLocalCorners(savedCorners), [savedCorners]);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [corners, setLocalCorners] = useState<CourtCorner[]>(
+    savedCorners.length === 4 ? savedCorners : SMART_COURT_CORNERS,
+  );
+  const [dragOver, setDragOver] = useState(false);
 
   useEffect(() => {
+    if (savedCorners.length === 4) setLocalCorners(savedCorners);
+  }, [savedCorners]);
+
+  // Only tear down a locally owned camera — never kill Live's shared source.
+  useEffect(() => {
+    if (video) return;
     return () => stop();
-  }, [stop]);
+  }, [video, stop]);
 
   const handleTap = (e: React.MouseEvent<HTMLDivElement>) => {
     if (status !== "streaming") return;
@@ -52,50 +96,102 @@ export function Calibrate() {
     setLocalCorners([...corners, { x, y }]);
   };
 
-  const autoDetect = () => {
-    // Structural auto-detection stand-in — assumes a typical court framing where
-    // the court fills roughly the center 70% of the frame. This is a reasonable
-    // starting point that the user can nudge, and matches the "perspective
-    // transformation to known boundaries" strategy in the pitch.
-    setLocalCorners([
-      { x: 0.14, y: 0.24 },
-      { x: 0.86, y: 0.24 },
-      { x: 0.94, y: 0.9 },
-      { x: 0.06, y: 0.9 },
-    ]);
+  const pickFile = (file: File | undefined) => {
+    if (!file) return;
+    void loadFile(file);
   };
 
+  const autoDetect = () => setLocalCorners([...SMART_COURT_CORNERS]);
   const undo = () => setLocalCorners(corners.slice(0, -1));
   const reset = () => setLocalCorners([]);
 
   const commit = () => {
-    setCorners(corners);
-    nav("/live");
+    setCorners(corners.length === 4 ? corners : SMART_COURT_CORNERS);
+    onReady();
   };
 
-  const ready = corners.length === 4;
+  const ready = corners.length === 4 && status === "streaming";
 
   return (
     <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.24em] text-court-accent">
-            Step 1 · Setup
-          </div>
-          <h1 className="font-display text-3xl md:text-4xl">
-            Calibrate your court
+          <p className="section-label">Live · Step 1</p>
+          <h1 className="font-display mt-1 text-3xl md:text-4xl">
+            Upload a clip, then mark the court
           </h1>
-          <p className="mt-2 max-w-2xl text-white/60">
-            Mount the phone on the fence or a cheap tripod along a baseline.
-            Tap the four corners of the playing surface — Anact Ortho uses this
-            perspective anchor for line-crossing detection and heatmapping.
+          <p className="mt-2 max-w-2xl text-court-muted">
+            No basketball required — drop any courtside mp4. Then tap four
+            corners (or keep the smart preset) and continue.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <SportPicker sport={sport} setSport={setSport} />
           <StylePicker style={commentaryStyle} setStyle={setCommentaryStyle} />
+          <SportPicker />
         </div>
       </header>
+
+      {/* Always-visible upload strip — not buried in the video curtain */}
+      <div
+        className={`rounded-2xl border-2 border-dashed p-5 transition ${
+          dragOver
+            ? "border-court-accent bg-court-accent/10"
+            : "border-court-accent/40 bg-court-accent/5"
+        }`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          pickFile(e.dataTransfer.files?.[0]);
+        }}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="video/mp4,video/quicktime,video/webm,video/x-msvideo,.mp4,.mov,.webm,.avi,.mkv"
+          className="hidden"
+          onChange={(e) => {
+            pickFile(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
+        <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-court-accent text-white">
+              <Upload className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="font-semibold text-white">
+                {fileName ? `Loaded: ${fileName}` : "Drop a video here"}
+              </div>
+              <p className="mt-0.5 text-sm text-white/55">
+                mp4 / mov / webm — Pexels or phone footage works
+              </p>
+              {error ? (
+                <p className="mt-1 text-xs text-court-rose">{error}</p>
+              ) : null}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Upload className="h-4 w-4" />
+              {fileName ? "Swap video" : "Choose video file"}
+            </button>
+            <button type="button" className="btn-ghost" onClick={() => void start()}>
+              <Camera className="h-4 w-4" />
+              Camera
+            </button>
+          </div>
+        </div>
+      </div>
 
       <div className="grid gap-5 lg:grid-cols-[1.4fr_1fr]">
         <div className="panel overflow-hidden p-3">
@@ -109,14 +205,25 @@ export function Calibrate() {
               playsInline
               muted
               autoPlay
-              className="absolute inset-0 h-full w-full object-cover"
+              loop
+              className="absolute inset-0 h-full w-full object-contain"
             />
             {status !== "streaming" && (
-              <CameraCurtain
-                status={status}
-                error={error}
-                onStart={() => start()}
-              />
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/75 p-6 text-center">
+                <Upload className="h-10 w-10 text-court-accent" />
+                <div className="font-display text-lg">No video yet</div>
+                <p className="max-w-sm text-sm text-court-muted">
+                  Use the upload bar above — drag a file or click Choose video
+                  file.
+                </p>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Upload className="h-4 w-4" /> Choose video file
+                </button>
+              </div>
             )}
             {status === "streaming" && (
               <CalibrationOverlay corners={corners} />
@@ -127,10 +234,10 @@ export function Calibrate() {
                 {status === "streaming" ? (
                   <span className="flex items-center gap-1.5 text-court-lime">
                     <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-court-lime" />
-                    Camera live · Edge processing ready
+                    {source === "file" ? "Clip playing" : "Camera live"}
                   </span>
                 ) : (
-                  <span className="text-white/60">Camera offline</span>
+                  <span className="text-court-muted">Waiting for upload</span>
                 )}
               </div>
               <div className="rounded-lg bg-black/60 px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-white/70 backdrop-blur">
@@ -140,31 +247,37 @@ export function Calibrate() {
           </div>
 
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 px-1">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {status === "streaming" ? (
                 <>
-                  <button onClick={() => stop()} className="btn-ghost">
+                  <button type="button" onClick={() => stop()} className="btn-ghost">
                     <CameraOff className="h-4 w-4" />
                     Stop
                   </button>
-                  <button onClick={() => flip()} className="btn-ghost">
-                    <RotateCw className="h-4 w-4" />
-                    Flip
-                  </button>
+                  {source === "camera" ? (
+                    <button type="button" onClick={() => void flip()} className="btn-ghost">
+                      <RotateCw className="h-4 w-4" />
+                      Flip
+                    </button>
+                  ) : null}
                 </>
-              ) : (
-                <button onClick={() => start()} className="btn-ghost">
-                  <Camera className="h-4 w-4" />
-                  Enable camera
-                </button>
-              )}
-              <button onClick={autoDetect} className="btn-ghost">
+              ) : null}
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload className="h-4 w-4" />
+                Upload video
+              </button>
+              <button type="button" onClick={autoDetect} className="btn-ghost">
                 <Sparkles className="h-4 w-4" />
-                Auto-detect
+                Smart preset
               </button>
             </div>
             <div className="flex items-center gap-2">
               <button
+                type="button"
                 onClick={undo}
                 disabled={corners.length === 0}
                 className="btn-ghost disabled:opacity-40"
@@ -173,6 +286,7 @@ export function Calibrate() {
                 Undo
               </button>
               <button
+                type="button"
                 onClick={reset}
                 disabled={corners.length === 0}
                 className="btn-ghost disabled:opacity-40"
@@ -201,7 +315,7 @@ export function Calibrate() {
                         ? "border-court-lime/40 bg-court-lime/10 text-court-lime"
                         : current
                           ? "border-court-accent/60 bg-court-accent/10 text-white"
-                          : "border-white/10 bg-white/[0.02] text-white/50"
+                          : "border-white/10 bg-white/[0.02] text-court-muted"
                     }`}
                   >
                     <span className="flex h-6 w-6 items-center justify-center rounded-md border border-white/10 bg-black/40 font-mono text-[11px]">
@@ -214,19 +328,6 @@ export function Calibrate() {
             </ol>
           </div>
 
-          <div className="panel p-5">
-            <div className="mb-3 text-xs font-semibold uppercase tracking-widest text-court-accent">
-              Why we need this
-            </div>
-            <p className="text-sm leading-relaxed text-white/70">
-              The four corners define a homography that anchors every ball
-              position and player joint to real-world court coordinates.
-              That's what lets us call out-of-bounds objectively, generate
-              accurate heatmaps, and compute release velocity in meters per
-              second — all without a wide-angle lens or dual camera.
-            </p>
-          </div>
-
           <motion.button
             whileHover={{ scale: ready ? 1.01 : 1 }}
             whileTap={{ scale: ready ? 0.99 : 1 }}
@@ -234,60 +335,19 @@ export function Calibrate() {
             disabled={!ready}
             className={`flex w-full items-center justify-center gap-2 rounded-2xl px-6 py-4 font-display text-lg font-semibold transition ${
               ready
-                ? "bg-gradient-to-r from-court-accent to-court-accent2 text-black shadow-glow hover:brightness-110"
-                : "cursor-not-allowed bg-white/5 text-white/40"
+                ? "bg-gradient-to-r from-court-accent to-court-accent2 text-white shadow-glow hover:brightness-110"
+                : "cursor-not-allowed bg-white/5 text-court-muted"
             }`}
           >
-            {ready ? "Tip off" : `Tap ${4 - corners.length} more corner${corners.length === 3 ? "" : "s"}`}
+            {status !== "streaming"
+              ? "Upload a video first"
+              : ready
+                ? "Continue to Live"
+                : `Tap ${4 - corners.length} more corner${corners.length === 3 ? "" : "s"}`}
             {ready && <ArrowRight className="h-5 w-5" />}
           </motion.button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function CameraCurtain({
-  status,
-  error,
-  onStart,
-}: {
-  status: string;
-  error: string | null;
-  onStart: () => void;
-}) {
-  return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-gradient-to-br from-black/60 via-court-bg/60 to-black/70 p-6 text-center">
-      {status === "denied" ? (
-        <>
-          <ShieldAlert className="h-10 w-10 text-court-rose" />
-          <div className="max-w-md">
-            <div className="font-display text-lg">Camera permission needed</div>
-            <p className="mt-1 text-sm text-white/60">
-              Anact Ortho runs entirely on your device — grant camera access in
-              your browser settings and reload.
-            </p>
-          </div>
-        </>
-      ) : status === "requesting" ? (
-        <div className="text-white/70">Requesting camera…</div>
-      ) : (
-        <>
-          <Camera className="h-10 w-10 text-court-accent" />
-          <div className="max-w-md">
-            <div className="font-display text-lg">Enable your camera</div>
-            <p className="mt-1 text-sm text-white/60">
-              We'll process everything on-device. Nothing leaves the phone.
-            </p>
-            {error ? (
-              <p className="mt-2 text-xs text-court-rose">{error}</p>
-            ) : null}
-          </div>
-          <button onClick={onStart} className="btn-primary">
-            <Camera className="h-4 w-4" /> Start camera
-          </button>
-        </>
-      )}
     </div>
   );
 }
@@ -308,35 +368,25 @@ function CalibrationOverlay({ corners }: { corners: CourtCorner[] }) {
       preserveAspectRatio="none"
       className="pointer-events-none absolute inset-0 h-full w-full"
     >
-      {path && (
+      {path ? (
         <path
           d={path}
-          fill={corners.length === 4 ? "rgba(255, 91, 31, 0.12)" : "none"}
+          fill={corners.length === 4 ? "rgba(255,91,31,0.12)" : "none"}
           stroke="#ff5b1f"
-          strokeWidth="0.4"
-          strokeDasharray={corners.length === 4 ? "0" : "1 1"}
+          strokeWidth="0.6"
           vectorEffect="non-scaling-stroke"
         />
-      )}
+      ) : null}
       {corners.map((c, i) => (
         <g key={i}>
-          <circle
-            cx={c.x * 100}
-            cy={c.y * 100}
-            r="1.6"
-            fill="#ff5b1f"
-            stroke="#050914"
-            strokeWidth="0.4"
-            vectorEffect="non-scaling-stroke"
-          />
+          <circle cx={c.x * 100} cy={c.y * 100} r="1.8" fill="#ff5b1f" />
           <text
-            x={c.x * 100 + 2}
-            y={c.y * 100 - 1.5}
-            fontSize="2"
-            fill="#ffb020"
-            style={{ paintOrder: "stroke" }}
-            stroke="#050914"
-            strokeWidth="0.4"
+            x={c.x * 100}
+            y={c.y * 100 - 3}
+            textAnchor="middle"
+            fill="white"
+            fontSize="3"
+            fontFamily="monospace"
           >
             {i + 1}
           </text>
@@ -346,58 +396,48 @@ function CalibrationOverlay({ corners }: { corners: CourtCorner[] }) {
   );
 }
 
-function SportPicker({
-  sport,
-  setSport,
+function StylePicker({
+  style,
+  setStyle,
 }: {
-  sport: "basketball" | "soccer" | "tennis";
-  setSport: (s: "basketball" | "soccer" | "tennis") => void;
+  style: string;
+  setStyle: (s: "playground" | "broadcast" | "hype") => void;
 }) {
-  const opts: { id: "basketball" | "soccer" | "tennis"; label: string }[] = [
-    { id: "basketball", label: "Basketball" },
-    { id: "soccer", label: "Soccer" },
-    { id: "tennis", label: "Tennis" },
-  ];
+  const opts = ["playground", "broadcast", "hype"] as const;
   return (
-    <div className="inline-flex rounded-xl border border-white/10 bg-white/[0.03] p-1">
+    <div className="inline-flex rounded-lg border border-white/10 p-0.5 text-[11px] font-semibold">
       {opts.map((o) => (
         <button
-          key={o.id}
-          onClick={() => setSport(o.id)}
-          className={`rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition ${
-            sport === o.id ? "bg-white text-black" : "text-white/60 hover:text-white"
+          key={o}
+          type="button"
+          className={`rounded-md px-2 py-1 capitalize ${
+            style === o ? "bg-white text-black" : "text-court-muted"
           }`}
+          onClick={() => setStyle(o)}
         >
-          {o.label}
+          {o}
         </button>
       ))}
     </div>
   );
 }
 
-function StylePicker({
-  style,
-  setStyle,
-}: {
-  style: "playground" | "broadcast" | "hype";
-  setStyle: (s: "playground" | "broadcast" | "hype") => void;
-}) {
-  const opts: { id: "playground" | "broadcast" | "hype"; label: string }[] = [
-    { id: "playground", label: "Playground" },
-    { id: "broadcast", label: "Broadcast" },
-    { id: "hype", label: "Hype" },
-  ];
+function SportPicker() {
+  const sport = useGame((s) => s.sport);
+  const setSport = useGame((s) => s.setSport);
+  const opts = ["basketball", "soccer", "tennis"] as const;
   return (
-    <div className="inline-flex rounded-xl border border-white/10 bg-white/[0.03] p-1">
+    <div className="inline-flex rounded-lg border border-white/10 p-0.5 text-[11px] font-semibold">
       {opts.map((o) => (
         <button
-          key={o.id}
-          onClick={() => setStyle(o.id)}
-          className={`rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition ${
-            style === o.id ? "bg-white text-black" : "text-white/60 hover:text-white"
+          key={o}
+          type="button"
+          className={`rounded-md px-2 py-1 capitalize ${
+            sport === o ? "bg-white text-black" : "text-court-muted"
           }`}
+          onClick={() => setSport(o)}
         >
-          {o.label}
+          {o}
         </button>
       ))}
     </div>

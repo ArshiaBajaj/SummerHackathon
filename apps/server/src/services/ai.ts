@@ -13,7 +13,7 @@ export function llmEnabled(): boolean {
   return Boolean(process.env.OPENAI_API_KEY);
 }
 
-async function chat(system: string, user: string, maxTokens = 320): Promise<string | null> {
+export async function chat(system: string, user: string, maxTokens = 320): Promise<string | null> {
   const key = process.env.OPENAI_API_KEY;
   if (!key) return null;
   const model = process.env.OPENAI_MODEL ?? "gpt-4o-mini";

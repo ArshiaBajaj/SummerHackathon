@@ -30,9 +30,12 @@ app.get("/", (_req, res) => {
       "GET  /api/films/:id",
       "POST /api/commentary",
       "POST /api/ai/scouting-report",
+      "POST /api/ai/film  {action: line|ask|moment|quiz|chapters|recap}",
       "POST /api/scout/profiles",
       "GET  /api/scout/profiles",
       "GET  /api/scout/profiles/:id",
+      "GET  /api/hooperiq/health",
+      "POST /api/hooperiq/assess",
     ],
   });
 });
